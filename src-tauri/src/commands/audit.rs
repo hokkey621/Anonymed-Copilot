@@ -1,0 +1,51 @@
+use crate::domain::model::AuditLog;
+use crate::infrastructure::pdf_writer; // Assuming this exists or mocked
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
+use hex;
+
+// Create alias for HMAC-SHA256
+type HmacSha256 = Hmac<Sha256>;
+
+#[tauri::command]
+pub fn generate_report(mut log: AuditLog) -> Result<String, String> {
+    // Generate signature if missing
+    if log.signature.is_none() {
+        let secret_key = b"super-secret-key-from-env"; // TODO: load from safe storage
+        let mut mac = HmacSha256::new_from_slice(secret_key)
+            .map_err(|e| format!("HMAC invalid length: {}", e))?;
+
+        let data_to_sign = format!("{}{}{}", log.task_context, log.data_hash, log.timestamp);
+        mac.update(data_to_sign.as_bytes());
+
+        let result = mac.finalize();
+        let signature = hex::encode(result.into_bytes());
+        log.signature = Some(signature);
+    }
+
+    // In Phase 1+2, serialize to JSON
+    let json_report = serde_json::to_string_pretty(&log).map_err(|e| e.to_string())?;
+
+    // Call infrastructure to write PDF (Mocked call)
+    pdf_writer::write_report();
+
+    Ok(json_report)
+}
+
+#[tauri::command]
+pub fn generate_public_notice(log: AuditLog) -> Result<String, String> {
+    // Generate APPI Article 43 Notice Text with "Method of Provision"
+    let notice = format!(
+        "【匿名加工情報の作成と提供に関する公表】\n\n\
+        当院は、以下の目的で匿名加工情報を作成し、第三者へ提供いたします。\n\n\
+        1. 利用目的: {}\n\
+        2. 加工した情報の項目:\n   - 氏名、住所、生年月日等の特定の個人を識別できる記述等を削除または置換\n\
+        3. 提供の方法: 暗号化された通信経路による電子伝送 (HTTPS/TLS)\n\n\
+        (作成日時: {})\n\
+        (ログ署名: {})",
+        log.task_context,
+        log.timestamp,
+        log.signature.unwrap_or_else(|| "署名なし".to_string())
+    );
+    Ok(notice)
+}
