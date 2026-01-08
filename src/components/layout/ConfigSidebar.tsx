@@ -20,14 +20,16 @@ export function ConfigSidebar({ onRunAnonymization, isProcessing, currentContent
     { role: "assistant", content: "Hello! I am your Anonymization Copilot. Ask me about your text or run anonymization." }
   ]);
   const [inputInfo, setInputInfo] = useState("");
-  const [taskContext, setTaskContext] = useState("Medical Case Study");
+  const [isChatLoading, setIsChatLoading] = useState(false);
+  const taskContext = "Medical Case Study"; // Fixed for now
 
   const handleSendMessage = async () => {
-    if (!inputInfo.trim()) return;
+    if (!inputInfo.trim() || isChatLoading) return;
 
     const userMsg: Message = { role: "user", content: inputInfo };
     setMessages(prev => [...prev, userMsg]);
     setInputInfo("");
+    setIsChatLoading(true);
 
     try {
         // Context-Aware Chat: Include current content if available
@@ -40,6 +42,8 @@ export function ConfigSidebar({ onRunAnonymization, isProcessing, currentContent
         setMessages(prev => [...prev, { role: "assistant", content: response }]);
     } catch (e) {
         setMessages(prev => [...prev, { role: "assistant", content: `Error: ${e}` }]);
+    } finally {
+        setIsChatLoading(false);
     }
   };
 
@@ -48,7 +52,7 @@ export function ConfigSidebar({ onRunAnonymization, isProcessing, currentContent
         <div className="p-3 border-b text-sm font-semibold flex justify-between items-center bg-muted/10">
             <span>Copilot Chat</span>
             <div className="flex gap-1">
-                 <div className="h-2 w-2 rounded-full bg-green-500" />
+                 <div className={`h-2 w-2 rounded-full ${isChatLoading ? 'bg-yellow-500 animate-pulse' : 'bg-green-500'}`} />
             </div>
         </div>
 
@@ -62,6 +66,13 @@ export function ConfigSidebar({ onRunAnonymization, isProcessing, currentContent
                         </div>
                     </div>
                 ))}
+                {isChatLoading && (
+                    <div className="flex justify-start">
+                        <div className="max-w-[85%] rounded-lg p-3 text-sm border shadow-sm bg-muted/30 text-muted-foreground italic">
+                            Thinking...
+                        </div>
+                    </div>
+                )}
             </div>
          </ScrollArea>
 
