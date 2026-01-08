@@ -1,28 +1,24 @@
 // import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"; // Temporarily disabled due to layout issues
 import { ConfigSidebar } from "./ConfigSidebar";
 import { EditorPanel } from "./EditorPanel";
-import { FileTreeSidebar } from "./FileTreeSidebar";
+import { SampleSidebar, SampleDraft } from "./SampleSidebar";
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 export function MainLayout() {
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [originalContent, setOriginalContent] = useState<string>("");
   const [anonymizedContent, setAnonymizedContent] = useState<string>("");
 
   const [isProcessing, setIsProcessing] = useState(false);
 
-  const handleFileSelect = async (path: string) => {
-    setSelectedFile(path);
-    try {
-      const content = await invoke<string>("read_text_file", { filePath: path });
-      setOriginalContent(content);
-      // For now, init anonymized content as same as original (or empty until analyzed)
-      setAnonymizedContent(content);
-    } catch (error) {
-      console.error("Failed to read file:", error);
-      setOriginalContent("Error reading file");
-    }
+  const handleSampleSelect = (draft: SampleDraft) => {
+      setOriginalContent(draft.content);
+      setAnonymizedContent(draft.content); // Reset anonymized view
+  };
+
+  const handleNewDraft = () => {
+      setOriginalContent("");
+      setAnonymizedContent("");
   };
 
   const handleAnonymize = async (task: string) => {
@@ -42,6 +38,13 @@ export function MainLayout() {
     }
   };
 
+  const handleAccept = () => {
+      setOriginalContent(anonymizedContent);
+      // Optional: clear anonymizedContent or keep it same?
+      // Keeping it same means DiffEditor shows no diff, which is correct feedback.
+      // Or we could show a toast.
+  };
+
   return (
     <div className="h-screen w-full bg-background text-foreground flex flex-col font-sans">
       {/* Main Content Area */}
@@ -57,17 +60,25 @@ export function MainLayout() {
         <div className="flex-1 flex min-w-0 overflow-hidden">
           {/* File Explorer - Fixed Width */}
           <div className="w-64 shrink-0 h-full bg-background border-r overflow-hidden">
-            <FileTreeSidebar onFileSelect={handleFileSelect} />
+            <SampleSidebar onSelect={handleSampleSelect} onNewDraft={handleNewDraft} />
           </div>
 
           {/* Editor Area - Flexible */}
           <div className="flex-1 h-full bg-background overflow-hidden">
-            <EditorPanel original={originalContent} modified={anonymizedContent} />
+            <EditorPanel
+                original={originalContent}
+                modified={anonymizedContent}
+                onAccept={handleAccept}
+            />
           </div>
 
           {/* Copilot Chat - Fixed Width */}
           <div className="w-80 shrink-0 h-full bg-background border-l overflow-hidden">
-             <ConfigSidebar onRunAnonymization={handleAnonymize} isProcessing={isProcessing} />
+             <ConfigSidebar
+                onRunAnonymization={handleAnonymize}
+                isProcessing={isProcessing}
+                currentContent={originalContent}
+             />
           </div>
         </div>
       </div>

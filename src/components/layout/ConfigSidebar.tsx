@@ -12,11 +12,12 @@ interface Message {
 interface ConfigSidebarProps {
   onRunAnonymization: (task: string) => void;
   isProcessing: boolean;
+  currentContent?: string;
 }
 
-export function ConfigSidebar({ onRunAnonymization, isProcessing }: ConfigSidebarProps) {
+export function ConfigSidebar({ onRunAnonymization, isProcessing, currentContent }: ConfigSidebarProps) {
   const [messages, setMessages] = useState<Message[]>([
-    { role: "assistant", content: "Hello! I am your Anonymization Copilot. Please select a file to start." }
+    { role: "assistant", content: "Hello! I am your Anonymization Copilot. Ask me about your text or run anonymization." }
   ]);
   const [inputInfo, setInputInfo] = useState("");
   const [taskContext, setTaskContext] = useState("Medical Case Study");
@@ -29,7 +30,13 @@ export function ConfigSidebar({ onRunAnonymization, isProcessing }: ConfigSideba
     setInputInfo("");
 
     try {
-        const response = await invoke<string>("chat_with_ai", { message: inputInfo });
+        // Context-Aware Chat: Include current content if available
+        let prompt = inputInfo;
+        if (currentContent && currentContent.trim().length > 0) {
+            prompt = `Context Text:\n${currentContent}\n\nUser Question:\n${inputInfo}`;
+        }
+
+        const response = await invoke<string>("chat_with_ai", { message: prompt });
         setMessages(prev => [...prev, { role: "assistant", content: response }]);
     } catch (e) {
         setMessages(prev => [...prev, { role: "assistant", content: `Error: ${e}` }]);
