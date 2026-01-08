@@ -12,6 +12,7 @@ pub fn run() {
             commands::file_system::read_text_file,
             commands::anonymizer::analyze_text,
             commands::anonymizer::apply_plan,
+            commands::anonymizer::chat_with_ai,
             commands::audit::generate_report,
             commands::audit::generate_public_notice,
             commands::batch::process_bulk
