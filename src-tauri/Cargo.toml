@@ -32,4 +32,5 @@ ort = "2.0.0-rc.11"
 ndarray = "0.17.1"
 md5 = "0.8.0"
 chrono = "0.4.42"
-
+reqwest = { version = "0.11", features = ["json"] }
+dotenv = "0.15.0"

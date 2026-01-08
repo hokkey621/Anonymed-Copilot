@@ -52,7 +52,7 @@ pub fn read_text_file(file_path: String) -> Result<String, String> {
 
     // Attempt detection: if BOM is present or UTF-8 invalid, try Shift-JIS
     // Simple heuristic: Try UTF-8 first.
-    let (cow, encoding_used, had_errors) = UTF_8.decode(&raw_bytes);
+    let (cow, _encoding_used, had_errors) = UTF_8.decode(&raw_bytes);
 
     if had_errors {
         // Retry with Shift-JIS

@@ -98,9 +98,9 @@ impl GeminiHandler {
                     ],
                 }
             ],
-            generationConfig: GenerationConfig {
+            generation_config: GenerationConfig {
                 temperature: 0.1, // Low temp for deterministic format
-                responseMimeType: "application/json".to_string(),
+                response_mime_type: "application/json".to_string(),
             },
         };
 
