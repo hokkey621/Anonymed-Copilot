@@ -3,15 +3,9 @@ pub mod domain;
 pub mod infrastructure;
 pub mod utils;
 
-use crate::infrastructure::onnx_handler::OnnxSession;
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Initialize ONNX Session (try loading a dummy model for now)
-    let onnx_session = OnnxSession::new("resources/ner_model.onnx");
-
     tauri::Builder::default()
-        .manage(onnx_session) // Manage state
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             commands::file_system::list_files,
