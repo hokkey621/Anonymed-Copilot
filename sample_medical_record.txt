@@ -1,0 +1,13 @@
+Patient: John Doe (DOB: 1980-05-15)
+Address: 123 Main St, Springfield, IL 62704
+Visit Date: 2023-10-25
+Hospital: Springfield General Hospital
+
+History of Present Illness:
+Mr. Doe presented with a 3-day history of fever and cough. He works as a teacher at Springfield Elementary. He denies recent travel.
+
+Assessment:
+Viral upper respiratory infection.
+
+Plan:
+Rest and hydration. Follow up with Dr. Smith if symptoms worsen.
