@@ -8,8 +8,6 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
-            commands::file_system::list_files,
-            commands::file_system::read_text_file,
             commands::anonymizer::analyze_text,
             commands::anonymizer::apply_plan,
             commands::anonymizer::chat_with_ai,
