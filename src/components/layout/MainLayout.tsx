@@ -1,4 +1,4 @@
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+// import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"; // Temporarily disabled due to layout issues
 import { ConfigSidebar } from "./ConfigSidebar";
 import { EditorPanel } from "./EditorPanel";
 import { FileTreeSidebar } from "./FileTreeSidebar";
@@ -53,26 +53,23 @@ export function MainLayout() {
              <div className="h-6 w-6 rounded bg-muted-foreground/30" />
         </div>
 
-        <ResizablePanelGroup direction="horizontal" className="flex-1 min-w-0">
-          {/* File Explorer */}
-          <ResizablePanel defaultSize={20} minSize={15} maxSize={30} className="bg-background min-w-[200px]">
+        {/* Simple Flex Layout (Replaced ResizablePanelGroup due to persistent issues) */}
+        <div className="flex-1 flex min-w-0 overflow-hidden">
+          {/* File Explorer - Fixed Width */}
+          <div className="w-64 shrink-0 h-full bg-background border-r overflow-hidden">
             <FileTreeSidebar onFileSelect={handleFileSelect} />
-          </ResizablePanel>
+          </div>
 
-          <ResizableHandle />
-
-          {/* Editor Area */}
-          <ResizablePanel defaultSize={55} minSize={30} className="bg-background min-w-[300px]">
+          {/* Editor Area - Flexible */}
+          <div className="flex-1 h-full bg-background overflow-hidden">
             <EditorPanel original={originalContent} modified={anonymizedContent} />
-          </ResizablePanel>
+          </div>
 
-          <ResizableHandle />
-
-          {/* Copilot Chat */}
-          <ResizablePanel defaultSize={25} minSize={20} className="bg-background min-w-[250px]">
+          {/* Copilot Chat - Fixed Width */}
+          <div className="w-80 shrink-0 h-full bg-background border-l overflow-hidden">
              <ConfigSidebar onRunAnonymization={handleAnonymize} isProcessing={isProcessing} />
-          </ResizablePanel>
-        </ResizablePanelGroup>
+          </div>
+        </div>
       </div>
 
       {/* Footer / Status Bar */}
