@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { invoke } from "@tauri-apps/api/core";
 
 interface Message {
   role: "user" | "assistant";
@@ -20,17 +21,19 @@ export function ConfigSidebar({ onRunAnonymization, isProcessing }: ConfigSideba
   const [inputInfo, setInputInfo] = useState("");
   const [taskContext, setTaskContext] = useState("Medical Case Study");
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (!inputInfo.trim()) return;
 
-    const newMsg: Message = { role: "user", content: inputInfo };
-    setMessages(prev => [...prev, newMsg]);
+    const userMsg: Message = { role: "user", content: inputInfo };
+    setMessages(prev => [...prev, userMsg]);
     setInputInfo("");
 
-    // Mock AI response for now
-    setTimeout(() => {
-        setMessages(prev => [...prev, { role: "assistant", content: "I received your message. Anonymization logic is continuously improving." }]);
-    }, 1000);
+    try {
+        const response = await invoke<string>("chat_with_ai", { message: inputInfo });
+        setMessages(prev => [...prev, { role: "assistant", content: response }]);
+    } catch (e) {
+        setMessages(prev => [...prev, { role: "assistant", content: `Error: ${e}` }]);
+    }
   };
 
   return (
