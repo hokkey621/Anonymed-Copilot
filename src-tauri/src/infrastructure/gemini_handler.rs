@@ -81,6 +81,44 @@ impl GeminiHandler {
         })
     }
 
+    /// Send request with exponential backoff retry for 503 errors
+    async fn send_with_retry(&self, request_body: &GeminiRequest) -> Result<reqwest::Response, String> {
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+            GEMINI_MODEL,
+            self.api_key
+        );
+
+        let max_retries = 3;
+        let mut retries = 0;
+
+        loop {
+            let response = self.client.post(&url)
+                .json(request_body)
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+
+            if response.status().as_u16() == 503 {
+                if retries >= max_retries {
+                    return Err("Gemini API overloaded (503) after max retries".to_string());
+                }
+                retries += 1;
+                let wait_ms = 500 * 2_u64.pow(retries - 1);
+                tokio::time::sleep(std::time::Duration::from_millis(wait_ms)).await;
+                continue;
+            }
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let text = response.text().await.unwrap_or_default();
+                return Err(format!("Gemini API Error {}: {}", status, text));
+            }
+
+            return Ok(response);
+        }
+    }
+
     pub async fn analyze(&self, text: &str, task_context: &str) -> Result<Vec<ReplacementItem>, String> {
         let specialized_instruction = match task_context {
             "Vaccine Study" | "Vaccine Development" => "CRITICAL: Maintain the graphical intervals between dates (e.g., if 'Day 1' and 'Day 14' exist, preserve the 13-day gap even if shifting dates). Anonymize specific dates but keep relative timeline integrity.",
@@ -107,12 +145,6 @@ impl GeminiHandler {
             task_context
         );
 
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-            GEMINI_MODEL,
-            self.api_key
-        );
-
         let request_body = GeminiRequest {
             contents: vec![
                 Content {
@@ -128,43 +160,11 @@ impl GeminiHandler {
             },
         };
 
-        let mut retries = 0;
-        let max_retries = 3;
-        let mut response;
-
-        loop {
-            response = self.client.post(&url)
-                .json(&request_body)
-                .send()
-                .await
-                .map_err(|e| e.to_string())?;
-
-            if response.status().as_u16() == 503 {
-                if retries >= max_retries {
-                    break;
-                }
-                retries += 1;
-                let wait_time = std::time::Duration::from_millis(500 * 2_u64.pow(retries - 1));
-                std::thread::sleep(wait_time); // Blocking sleep is okay in async if short, but tokio::time::sleep is better.
-                // Since this is generic async, prefer standard thread sleep or simple retry if avoiding extra tokio deps,
-                // but we are in Tauri async command, so blocking thread is bad for concurrency but fine for MVP.
-                // However, let's use a simple awaitable sleep if possible or just blocking for now.
-                continue;
-            }
-            break;
-        }
-
-        if !response.status().is_success() {
-             let status = response.status();
-             let text = response.text().await.unwrap_or_default();
-             return Err(format!("Gemini API Error {}: {}", status, text));
-        }
-
+        let response = self.send_with_retry(&request_body).await?;
         let resp_json: GeminiResponse = response.json().await.map_err(|e| e.to_string())?;
 
         if let Some(candidate) = resp_json.candidates.first() {
             if let Some(part) = candidate.content.parts.first() {
-                // Parse wrapped JSON
                 let wrapper: GeminiOutput = serde_json::from_str(&part.text)
                     .map_err(|e| format!("Failed to parse Gemini JSON: {}. Text was: {}", e, part.text))?;
                 return Ok(wrapper.replacements);
@@ -175,12 +175,6 @@ impl GeminiHandler {
     }
 
     pub async fn chat(&self, message: &str) -> Result<String, String> {
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-            GEMINI_MODEL,
-            self.api_key
-        );
-
         let request_body = GeminiRequest {
             contents: vec![
                 Content {
@@ -196,35 +190,7 @@ impl GeminiHandler {
             },
         };
 
-        let mut retries = 0;
-        let max_retries = 3;
-        let mut response;
-
-        loop {
-            response = self.client.post(&url)
-                .json(&request_body)
-                .send()
-                .await
-                .map_err(|e| e.to_string())?;
-
-             if response.status().as_u16() == 503 {
-                if retries >= max_retries {
-                    break;
-                }
-                retries += 1;
-                let wait_time = std::time::Duration::from_millis(500 * 2_u64.pow(retries - 1));
-                std::thread::sleep(wait_time);
-                continue;
-            }
-            break;
-        }
-
-        if !response.status().is_success() {
-             let status = response.status();
-             let text = response.text().await.unwrap_or_default();
-             return Err(format!("Gemini API Error {}: {}", status, text));
-        }
-
+        let response = self.send_with_retry(&request_body).await?;
         let resp_json: GeminiResponse = response.json().await.map_err(|e| e.to_string())?;
 
         if let Some(candidate) = resp_json.candidates.first() {
