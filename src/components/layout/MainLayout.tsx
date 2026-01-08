@@ -1,7 +1,7 @@
-// import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"; // Temporarily disabled due to layout issues
 import { ConfigSidebar } from "./ConfigSidebar";
 import { EditorPanel } from "./EditorPanel";
 import { SampleSidebar, SampleDraft } from "./SampleSidebar";
+import { StatusBar } from "./StatusBar";
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -83,19 +83,7 @@ export function MainLayout() {
         </div>
       </div>
 
-      {/* Footer / Status Bar */}
-      <div className="h-8 border-t bg-primary text-primary-foreground flex items-center px-4 text-xs justify-between">
-          <div className="flex items-center gap-4">
-              <span className="font-semibold">Re-identification Risk</span>
-              <div className="h-2 w-24 bg-white/20 rounded-full overflow-hidden">
-                  <div className="h-full bg-green-400 w-[1%]" />
-              </div>
-              <span className="text-green-200">Extremely Low 0.01%</span>
-          </div>
-          <div className="flex items-center gap-4">
-               <span>Ready</span>
-          </div>
-      </div>
+      <StatusBar />
     </div>
   );
 }
