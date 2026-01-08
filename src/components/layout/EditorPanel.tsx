@@ -12,7 +12,7 @@ export function EditorPanel({ original = "", modified = "" }: EditorPanelProps) 
         original={original}
         modified={modified}
         language="plaintext" // Can be dynamic
-        theme="vs-dark" // Match app theme
+        theme="light" // Match app theme
         options={{
             readOnly: false, // User might want to edit? Usually Diff is ReadOnly, but allow for now.
             renderSideBySide: true,

@@ -34,15 +34,20 @@ export function ConfigSidebar({ onRunAnonymization, isProcessing }: ConfigSideba
   };
 
   return (
-    <div className="h-full flex flex-col">
-        <div className="p-4 border-b font-semibold bg-muted/40 text-sm">Copilot Chat</div>
+    <div className="h-full flex flex-col bg-background">
+        <div className="p-3 border-b text-sm font-semibold flex justify-between items-center bg-muted/10">
+            <span>Copilot Chat</span>
+            <div className="flex gap-1">
+                 <div className="h-2 w-2 rounded-full bg-green-500" />
+            </div>
+        </div>
 
          {/* Chat History */}
          <ScrollArea className="flex-1 p-4">
             <div className="space-y-4">
                 {messages.map((m, i) => (
                     <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-[80%] rounded-lg p-3 text-sm ${m.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}>
+                        <div className={`max-w-[85%] rounded-lg p-3 text-sm border shadow-sm ${m.role === 'user' ? 'bg-white text-foreground' : 'bg-muted/30 text-foreground'}`}>
                             {m.content}
                         </div>
                     </div>
@@ -51,33 +56,23 @@ export function ConfigSidebar({ onRunAnonymization, isProcessing }: ConfigSideba
          </ScrollArea>
 
          {/* Input Area */}
-         <div className="p-4 border-t gap-2 flex flex-col">
-            <div className="flex gap-2">
+         <div className="p-4 border-t bg-muted/10 space-y-3">
+            <div className={`p-3 rounded-md border bg-white shadow-sm transition-all ${isProcessing ? 'ring-2 ring-primary/20' : ''}`}>
                  <Input
-                    value={taskContext}
-                    onChange={(e) => setTaskContext(e.target.value)}
-                    placeholder="Context (e.g. Vaccine Study)"
-                    className="text-xs"
-                />
-            </div>
-            <div className="flex gap-2">
-                <Input
+                    className="border-0 p-0 h-auto focus-visible:ring-0 text-sm shadow-none placeholder:text-muted-foreground/50"
                     value={inputInfo}
                     onChange={(e) => setInputInfo(e.target.value)}
-                    placeholder="Type instructions..."
+                    placeholder="Ask Copilot to edit..."
                     onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
                 />
-                <Button onClick={handleSendMessage} size="sm">Send</Button>
             </div>
-            <Button
-                variant="secondary"
-                className="w-full"
-                size="sm"
-                onClick={() => onRunAnonymization(taskContext)}
-                disabled={isProcessing}
-            >
-                {isProcessing ? "Analyzing with Gemini..." : "Run Auto-Anonymization"}
-            </Button>
+
+            <div className="flex gap-2 justify-end">
+                <Button variant="ghost" size="sm" onClick={() => setInputInfo("")}>Cancel</Button>
+                <Button onClick={() => onRunAnonymization(taskContext)} size="sm" disabled={isProcessing}>
+                    {isProcessing ? "Processing..." : "Run Anonymization"}
+                </Button>
+            </div>
          </div>
     </div>
   );

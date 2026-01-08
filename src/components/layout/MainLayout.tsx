@@ -43,27 +43,51 @@ export function MainLayout() {
   };
 
   return (
-    <div className="h-screen w-full bg-background text-foreground overflow-hidden">
-      <ResizablePanelGroup direction="horizontal">
-        {/* Left Sidebar: File Tree */}
-        <ResizablePanel defaultSize={20} minSize={15} maxSize={30} className="border-r">
-          <FileTreeSidebar onFileSelect={handleFileSelect} />
-        </ResizablePanel>
+    <div className="h-screen w-full bg-background text-foreground flex flex-col font-sans">
+      {/* Main Content Area */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Activity Bar (Leftmost narrow strip) */}
+        <div className="w-12 border-r bg-muted/30 flex flex-col items-center py-4 gap-4">
+             {/* Icons would go here */}
+             <div className="h-6 w-6 rounded bg-primary" />
+             <div className="h-6 w-6 rounded bg-muted-foreground/30" />
+        </div>
 
-        <ResizableHandle />
+        <ResizablePanelGroup direction="horizontal" className="flex-1 min-w-0">
+          {/* File Explorer */}
+          <ResizablePanel defaultSize={20} minSize={15} maxSize={30} className="bg-background min-w-[200px]">
+            <FileTreeSidebar onFileSelect={handleFileSelect} />
+          </ResizablePanel>
 
-        {/* Center: Editor (Diff View) */}
-        <ResizablePanel defaultSize={55} minSize={30}>
-          <EditorPanel original={originalContent} modified={anonymizedContent} />
-        </ResizablePanel>
+          <ResizableHandle />
 
-        <ResizableHandle />
+          {/* Editor Area */}
+          <ResizablePanel defaultSize={55} minSize={30} className="bg-background min-w-[300px]">
+            <EditorPanel original={originalContent} modified={anonymizedContent} />
+          </ResizablePanel>
 
-        {/* Right Sidebar: Chat & Config (AI Agent) */}
-        <ResizablePanel defaultSize={25} minSize={20} className="border-l">
-          <ConfigSidebar onRunAnonymization={handleAnonymize} isProcessing={isProcessing} />
-        </ResizablePanel>
-      </ResizablePanelGroup>
+          <ResizableHandle />
+
+          {/* Copilot Chat */}
+          <ResizablePanel defaultSize={25} minSize={20} className="bg-background min-w-[250px]">
+             <ConfigSidebar onRunAnonymization={handleAnonymize} isProcessing={isProcessing} />
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      </div>
+
+      {/* Footer / Status Bar */}
+      <div className="h-8 border-t bg-primary text-primary-foreground flex items-center px-4 text-xs justify-between">
+          <div className="flex items-center gap-4">
+              <span className="font-semibold">Re-identification Risk</span>
+              <div className="h-2 w-24 bg-white/20 rounded-full overflow-hidden">
+                  <div className="h-full bg-green-400 w-[1%]" />
+              </div>
+              <span className="text-green-200">Extremely Low 0.01%</span>
+          </div>
+          <div className="flex items-center gap-4">
+               <span>Ready</span>
+          </div>
+      </div>
     </div>
   );
 }
