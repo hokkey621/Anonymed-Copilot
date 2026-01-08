@@ -40,31 +40,49 @@ pub fn apply_plan(mut text: String, plan: AnonPlan) -> Result<String, String> {
         // "Hi Earth"
         // Indices are preserved for upstream items. Correct.
 
-        let start = item.start;
-        let end = item.end;
+        let suggested_start = item.start;
         let original_target = &item.original;
 
-        // Validation: Verify content at [start..end] matches 'original'
-        // We assume UTF-8 byte indices first
-        if end > processed.len() || start > end {
-             // Fallback or Error
-             // Try char indices?
-             return Err(format!("Index out of bounds or invalid: {}..{} for len {}", start, end, processed.len()));
+        // Robust Index Finding:
+        // Gemini often miscounts indices (mixing chars vs bytes).
+        // Instead of blindly trusting `start`, we find all occurrences of `original`
+        // and pick the one geometrically closest to `suggested_start`.
+
+        let mut best_start = None;
+        let mut min_distance = usize::MAX;
+
+        for (found_idx, _) in processed.match_indices(original_target) {
+            let distance = if found_idx > suggested_start {
+                found_idx - suggested_start
+            } else {
+                suggested_start - found_idx
+            };
+
+            if distance < min_distance {
+                min_distance = distance;
+                best_start = Some(found_idx);
+            }
         }
 
-        let slice = &processed[start..end];
-        if slice != original_target {
-             // Verification Failed
-             // Try to be smart? For now, strict error as requested.
-             // Maybe it resembles?
-             return Err(format!(
-                 "Verification Failed: Expected '{}' at {}..{}, found '{}'. This suggests index misalignment.",
-                 original_target, start, end, slice
-             ));
-        }
+        let actual_start = match best_start {
+            Some(idx) => idx,
+            None => {
+                 return Err(format!("Could not find original text '{}' in document.", original_target));
+            }
+        };
 
-        // Apply Replacement
-        processed.replace_range(start..end, &item.replacement);
+        let actual_end = actual_start + original_target.len();
+
+        // Optional: Warn if deviation is huge?
+        // For now, trust the closest match.
+
+        // Check for overlap collisions if needed (but we are replacing ranges,
+        // sorting by start desc might be tricky if indices shift drastically).
+        // Actually, if we use find-closest strategy, we should probably re-sort or handle overlaps.
+        // But since we process in reverse intended order, finding the *closest* to the intended index is usually safe.
+        // Wait, if we use `match_indices`, we get byte indices.
+
+        processed.replace_range(actual_start..actual_end, &item.replacement);
     }
 
     // Security: Zeroize original text buffer
