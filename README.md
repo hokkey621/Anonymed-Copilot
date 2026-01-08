@@ -1,7 +1,83 @@
-# Tauri + React + Typescript
+# Anonymed Copilot
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+医療文書の匿名化を支援するデスクトップアプリケーション。Gemini APIを活用したAIアシスタントが、個人情報の検出と置換をサポートします。
 
-## Recommended IDE Setup
+![Tauri](https://img.shields.io/badge/Tauri-2.0-blue)
+![React](https://img.shields.io/badge/React-19-61DAFB)
+![Rust](https://img.shields.io/badge/Rust-1.70+-orange)
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+## 特徴
+
+- **AI匿名化**: Gemini 2.5 Flash APIによる高精度な個人情報検出
+- **Diff表示**: 変更前後を並べて確認できるエディタ
+- **コンテキストチャット**: 文書についてAIに相談可能
+- **サンプルテンプレート**: 医療記録、臨床ノート、研究概要のサンプル付き
+- **セキュア**: 元テキストのメモリゼロ化による安全な処理
+
+## スクリーンショット
+
+<!-- TODO: Add screenshot -->
+
+## セットアップ
+
+### 前提条件
+
+- Node.js 18+
+- Rust 1.70+
+- [Tauri CLI](https://v2.tauri.app/start/prerequisites/)
+
+### インストール
+
+```bash
+# 依存関係のインストール
+npm install
+
+# 環境変数の設定
+cp src-tauri/.env.example src-tauri/.env
+# .env に GOOGLE_API_KEY を設定
+```
+
+### 開発サーバー起動
+
+```bash
+npm run tauri dev
+```
+
+### ビルド
+
+```bash
+npm run tauri build
+```
+
+## 使い方
+
+1. **サンプル選択**: 左サイドバーからサンプルテキストを選択、または「Open Blank Editor」で新規作成
+2. **AI相談**: 右サイドバーのチャットで「どこを匿名化すべき？」などと質問
+3. **匿名化実行**: 「Run Anonymization」ボタンをクリック
+4. **確認・適用**: Diffエディタで変更を確認し、「Apply Changes」で確定
+
+## 技術スタック
+
+| レイヤー | 技術 |
+|---------|------|
+| Frontend | React 19, TypeScript, Tailwind CSS, Monaco Editor |
+| Backend | Rust, Tauri 2.0 |
+| AI | Google Gemini 2.5 Flash API |
+
+## プロジェクト構造
+
+```
+src/                    # React Frontend
+├── components/layout/  # UI Components (MainLayout, EditorPanel, etc.)
+├── data/              # Sample data
+└── lib/               # Utilities
+
+src-tauri/             # Rust Backend
+├── src/commands/      # Tauri Commands (anonymizer, audit, batch)
+├── src/infrastructure/# External APIs (GeminiHandler)
+└── src/domain/        # Domain Models
+```
+
+## ライセンス
+
+MIT License

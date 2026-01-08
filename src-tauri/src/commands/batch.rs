@@ -1,5 +1,4 @@
 use crate::domain::model::AuditLog;
-use crate::commands::file_system::read_text_file;
 use std::fs;
 use std::path::Path;
 use crate::infrastructure::gemini_handler::GeminiHandler;
@@ -36,10 +35,10 @@ pub async fn process_bulk(
     let mut error_count = 0;
 
     for entry in entries {
-        let file_path = entry.path().to_string_lossy().to_string();
+        let file_path = entry.path();
 
-        // Read (reuse existing logic)
-        let content = match read_text_file(file_path.clone()) {
+        // Read file content directly
+        let content = match fs::read_to_string(&file_path) {
              Ok(c) => c,
              Err(_) => {
                  error_count += 1;
@@ -79,7 +78,7 @@ pub async fn process_bulk(
                 logs.push(log);
             },
             Err(e) => {
-                println!("Error processing file {}: {}", file_path, e);
+                println!("Error processing file {}: {}", file_path.display(), e);
                 error_count += 1;
             }
         }

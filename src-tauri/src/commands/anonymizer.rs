@@ -26,27 +26,11 @@ pub fn apply_plan(mut text: String, plan: AnonPlan) -> Result<String, String> {
 
     let mut processed = text.clone();
 
-    // Check if indices are likely char indices or byte indices
-    // We assume Gemini returns CHAR indices often, but we asked for byte.
-    // We will verify.
-
     for item in replacements {
-        // Since we are replacing from the end, indices of *earlier* parts are valid for the *original* string (or rather, consistent relative to start).
-        // Wait, if we modify the string in place, and we go from back to front:
-        // Text: "Hello World" (Len 11)
-        // Apply: "World" -> "Earth" at 6..11
-        // "Hello Earth"
-        // Apply: "Hello" -> "Hi" at 0..5
-        // "Hi Earth"
-        // Indices are preserved for upstream items. Correct.
-
         let suggested_start = item.start;
         let original_target = &item.original;
 
-        // Robust Index Finding:
-        // Gemini often miscounts indices (mixing chars vs bytes).
-        // Instead of blindly trusting `start`, we find all occurrences of `original`
-        // and pick the one geometrically closest to `suggested_start`.
+        // Find closest matching occurrence (handles Gemini index misalignment)
 
         let mut best_start = None;
         let mut min_distance = usize::MAX;
@@ -72,16 +56,6 @@ pub fn apply_plan(mut text: String, plan: AnonPlan) -> Result<String, String> {
         };
 
         let actual_end = actual_start + original_target.len();
-
-        // Optional: Warn if deviation is huge?
-        // For now, trust the closest match.
-
-        // Check for overlap collisions if needed (but we are replacing ranges,
-        // sorting by start desc might be tricky if indices shift drastically).
-        // Actually, if we use find-closest strategy, we should probably re-sort or handle overlaps.
-        // But since we process in reverse intended order, finding the *closest* to the intended index is usually safe.
-        // Wait, if we use `match_indices`, we get byte indices.
-
         processed.replace_range(actual_start..actual_end, &item.replacement);
     }
 
