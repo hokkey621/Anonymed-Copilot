@@ -3,6 +3,13 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use dotenv::dotenv;
 
+use crate::domain::model::ReplacementEntry;
+
+#[derive(Deserialize)]
+struct GeminiResponse {
+    candidates: Vec<Candidate>,
+}
+
 #[derive(Serialize)]
 struct GeminiRequest {
     contents: Vec<Content>,
@@ -28,19 +35,9 @@ struct GenerationConfig {
     response_mime_type: String,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct ReplacementItem {
-    pub original: String,
-    pub replacement: String,
-    pub start: usize,
-    pub end: usize,
-    pub reason: String,
-    pub category: Option<String>,
-}
-
 #[derive(Deserialize)]
-struct GeminiResponse {
-    candidates: Vec<Candidate>,
+struct GeminiOutput {
+    replacements: Vec<ReplacementEntry>,
 }
 
 #[derive(Deserialize)]
@@ -63,101 +60,58 @@ pub struct GeminiHandler {
     api_key: String,
 }
 
-#[derive(Deserialize)]
-struct GeminiOutput {
-    replacements: Vec<ReplacementItem>,
-}
-
 const GEMINI_MODEL: &str = "gemini-2.5-flash";
 
 impl GeminiHandler {
     pub fn new() -> Result<Self, String> {
-        dotenv().ok(); // Load .env
+        dotenv().ok();
         let api_key = env::var("GOOGLE_API_KEY").map_err(|_| "GOOGLE_API_KEY not set".to_string())?;
-
-        Ok(Self {
-            client: Client::new(),
-            api_key,
-        })
+        Ok(Self { client: Client::new(), api_key })
     }
 
-    /// Send request with exponential backoff retry for 503 errors
     async fn send_with_retry(&self, request_body: &GeminiRequest) -> Result<reqwest::Response, String> {
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-            GEMINI_MODEL,
-            self.api_key
+            GEMINI_MODEL, self.api_key
         );
 
         let max_retries = 3;
         let mut retries = 0;
 
         loop {
-            let response = self.client.post(&url)
-                .json(request_body)
-                .send()
-                .await
-                .map_err(|e| e.to_string())?;
+            let response = self.client.post(&url).json(request_body).send().await.map_err(|e| e.to_string())?;
 
             if response.status().as_u16() == 503 {
-                if retries >= max_retries {
-                    return Err("Gemini API overloaded (503) after max retries".to_string());
-                }
+                if retries >= max_retries { return Err("Gemini API overloaded (503) after max retries".to_string()); }
                 retries += 1;
-                let wait_ms = 500 * 2_u64.pow(retries - 1);
-                tokio::time::sleep(std::time::Duration::from_millis(wait_ms)).await;
+                tokio::time::sleep(std::time::Duration::from_millis(500 * 2_u64.pow(retries - 1))).await;
                 continue;
             }
-
             if !response.status().is_success() {
                 let status = response.status();
                 let text = response.text().await.unwrap_or_default();
                 return Err(format!("Gemini API Error {}: {}", status, text));
             }
-
             return Ok(response);
         }
     }
 
-    pub async fn analyze(&self, text: &str, task_context: &str) -> Result<Vec<ReplacementItem>, String> {
+    /// Analyze text and return structured replacements (for Execute button)
+    pub async fn analyze(&self, text: &str, task_context: &str) -> Result<Vec<ReplacementEntry>, String> {
         let specialized_instruction = match task_context {
-            "Vaccine Study" | "Vaccine Development" => "CRITICAL: Maintain the graphical intervals between dates (e.g., if 'Day 1' and 'Day 14' exist, preserve the 13-day gap even if shifting dates). Anonymize specific dates but keep relative timeline integrity.",
-            "Educational Material" | "Case Study" => "CRITICAL: Preserve key medical condition names and general demographics (age range, sex) necessary for educational value. Only anonymize direct identifiers (Names, IDs, specific Hospital names).",
-            _ => "Anonymize ALL personal identifiers including Names, Dates, IDs, Locations, and Hospital names. Prioritize privacy over utility.",
+            "Vaccine Study" | "Vaccine Development" => "CRITICAL: Maintain the graphical intervals between dates. Anonymize specific dates to relative days (Day 0, Day 14). Unify facility names to Site A, Site B.",
+            "Educational Material" | "Case Study" => "CRITICAL: Preserve key medical condition names and general demographics. Only anonymize direct identifiers.",
+            _ => "Anonymize ALL personal identifiers including Names, Dates, IDs, Locations, and Hospital names.",
         };
 
         let system_prompt = format!(
-            "You are an elite medical privacy specialist. \
-            Task: Anonymize the text below for context: '{}'. \
-            Rules: \
-            1. {specialized_instruction} \
-            2. Identify specific slices of text to anonymize. \
-            3. Return a JSON object with a single key 'replacements' containing an array of objects. \
-            4. Each object must have: \
-               - 'original': exact text slice \
-               - 'replacement': safe placeholder (e.g., **NAME**, **DATE**) \
-               - 'start': start offset (0-indexed UTF-8 byte offset if possible, otherwise char offset) \
-               - 'end': end offset (exclusive) \
-               - 'reason': brief explanation \
-               - 'category': e.g., 'PER', 'LOC', 'DATE' \
-            5. Do NOT change the text content. Only identifying info. \
-            6. STRICT JSON format.",
-            task_context
+            "You are an elite medical privacy specialist. Task: Anonymize the text below for context: '{}'. Rules: 1. {} 2. Return JSON with 'replacements' array. Each object: 'original' (exact text), 'replacement', 'start', 'end', 'reason', 'category'. 3. STRICT JSON.",
+            task_context, specialized_instruction
         );
 
         let request_body = GeminiRequest {
-            contents: vec![
-                Content {
-                    role: "user".to_string(),
-                    parts: vec![
-                        Part { text: format!("{}\n\nText to Anonymize:\n{}", system_prompt, text) }
-                    ],
-                }
-            ],
-            generation_config: GenerationConfig {
-                temperature: 0.1,
-                response_mime_type: "application/json".to_string(),
-            },
+            contents: vec![Content { role: "user".to_string(), parts: vec![Part { text: format!("{}\n\nText:\n{}", system_prompt, text) }] }],
+            generation_config: GenerationConfig { temperature: 0.1, response_mime_type: "application/json".to_string() },
         };
 
         let response = self.send_with_retry(&request_body).await?;
@@ -166,28 +120,18 @@ impl GeminiHandler {
         if let Some(candidate) = resp_json.candidates.first() {
             if let Some(part) = candidate.content.parts.first() {
                 let wrapper: GeminiOutput = serde_json::from_str(&part.text)
-                    .map_err(|e| format!("Failed to parse Gemini JSON: {}. Text was: {}", e, part.text))?;
+                    .map_err(|e| format!("Failed to parse Gemini JSON: {}. Text: {}", e, part.text))?;
                 return Ok(wrapper.replacements);
             }
         }
-
         Err("No content generated".to_string())
     }
 
+    /// Simple chat for conversational discussion (no structured JSON)
     pub async fn chat(&self, message: &str) -> Result<String, String> {
         let request_body = GeminiRequest {
-            contents: vec![
-                Content {
-                    role: "user".to_string(),
-                    parts: vec![
-                        Part { text: message.to_string() }
-                    ],
-                }
-            ],
-            generation_config: GenerationConfig {
-                temperature: 0.7, // Higher temp for chat
-                response_mime_type: "text/plain".to_string(),
-            },
+            contents: vec![Content { role: "user".to_string(), parts: vec![Part { text: message.to_string() }] }],
+            generation_config: GenerationConfig { temperature: 0.7, response_mime_type: "text/plain".to_string() },
         };
 
         let response = self.send_with_retry(&request_body).await?;
@@ -198,7 +142,6 @@ impl GeminiHandler {
                 return Ok(part.text.clone());
             }
         }
-
         Err("No content generated".to_string())
     }
 }
