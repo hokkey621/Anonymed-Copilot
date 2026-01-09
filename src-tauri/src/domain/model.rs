@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MedicalRecord {
@@ -8,8 +10,27 @@ pub struct MedicalRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplacementEntry {
+    pub original: String,
+    pub replacement: String,
+    pub start: usize,
+    pub end: usize,
+    pub reason: String,
+    pub category: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnonPlan {
-    pub items: Vec<String>, // Placeholder
+    pub task_name: String,
+    pub global_rules: HashMap<String, Value>,
+    pub replacements: Vec<ReplacementEntry>,
+    pub status: String, // "draft" | "approved"
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentResponse {
+    pub message: String,
+    pub plan: AnonPlan,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
