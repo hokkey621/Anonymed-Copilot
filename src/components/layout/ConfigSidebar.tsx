@@ -12,16 +12,16 @@ interface Message {
 interface ConfigSidebarProps {
   onRunAnonymization: (task: string) => void;
   isProcessing: boolean;
-  currentContent?: string;
+  currentContent: string;
 }
 
 export function ConfigSidebar({ onRunAnonymization, isProcessing, currentContent }: ConfigSidebarProps) {
   const [messages, setMessages] = useState<Message[]>([
-    { role: "assistant", content: "Hello! I am your Anonymization Copilot. Ask me about your text or run anonymization." }
+    { role: "assistant", content: "こんにちは！匿名化エージェントです。どのような匿名化が必要か教えてください。準備ができたら「実行」ボタンを押してください。" }
   ]);
   const [inputInfo, setInputInfo] = useState("");
   const [isChatLoading, setIsChatLoading] = useState(false);
-  const taskContext = "Medical Case Study"; // Fixed for now
+  const [taskContext, setTaskContext] = useState("Medical Case Study");
 
   const handleSendMessage = async () => {
     if (!inputInfo.trim() || isChatLoading) return;
@@ -32,16 +32,26 @@ export function ConfigSidebar({ onRunAnonymization, isProcessing, currentContent
     setIsChatLoading(true);
 
     try {
-        // Context-Aware Chat: Include current content if available
+        // Simple conversational chat - include context
         let prompt = inputInfo;
         if (currentContent && currentContent.trim().length > 0) {
-            prompt = `Context Text:\n${currentContent}\n\nUser Question:\n${inputInfo}`;
+            prompt = `以下のテキストについて相談があります:\n---\n${currentContent.slice(0, 500)}${currentContent.length > 500 ? '...' : ''}\n---\n\n質問: ${inputInfo}`;
         }
 
         const response = await invoke<string>("chat_with_ai", { message: prompt });
         setMessages(prev => [...prev, { role: "assistant", content: response }]);
+
+        // Detect task context from conversation
+        const lowerInput = inputInfo.toLowerCase();
+        if (lowerInput.includes("ワクチン") || lowerInput.includes("vaccine")) {
+            setTaskContext("Vaccine Development");
+        } else if (lowerInput.includes("教育") || lowerInput.includes("教材") || lowerInput.includes("educational")) {
+            setTaskContext("Educational Material");
+        }
+
     } catch (e) {
-        setMessages(prev => [...prev, { role: "assistant", content: `Error: ${e}` }]);
+        console.error("Chat error:", e);
+        setMessages(prev => [...prev, { role: "assistant", content: `エラー: ${e}` }]);
     } finally {
         setIsChatLoading(false);
     }
@@ -50,7 +60,7 @@ export function ConfigSidebar({ onRunAnonymization, isProcessing, currentContent
   return (
     <div className="h-full flex flex-col bg-background">
         <div className="p-3 border-b text-sm font-semibold flex justify-between items-center bg-muted/10">
-            <span>Copilot Chat</span>
+            <span>匿名化エージェント</span>
             <div className="flex gap-1">
                  <div className={`h-2 w-2 rounded-full ${isChatLoading ? 'bg-yellow-500 animate-pulse' : 'bg-green-500'}`} />
             </div>
@@ -69,12 +79,17 @@ export function ConfigSidebar({ onRunAnonymization, isProcessing, currentContent
                 {isChatLoading && (
                     <div className="flex justify-start">
                         <div className="max-w-[85%] rounded-lg p-3 text-sm border shadow-sm bg-muted/30 text-muted-foreground italic">
-                            Thinking...
+                            考え中...
                         </div>
                     </div>
                 )}
             </div>
          </ScrollArea>
+
+         {/* Task Context Display */}
+         <div className="px-4 py-2 text-xs text-muted-foreground border-t">
+            タスク: {taskContext}
+         </div>
 
          {/* Input Area */}
          <div className="p-4 border-t bg-muted/10 space-y-3">
@@ -83,15 +98,21 @@ export function ConfigSidebar({ onRunAnonymization, isProcessing, currentContent
                     className="border-0 p-0 h-auto focus-visible:ring-0 text-sm shadow-none placeholder:text-muted-foreground/50"
                     value={inputInfo}
                     onChange={(e) => setInputInfo(e.target.value)}
-                    placeholder="Ask Copilot to edit..."
+                    placeholder="質問や要望を入力..."
                     onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+                    disabled={!currentContent}
                 />
             </div>
 
             <div className="flex gap-2 justify-end">
-                <Button variant="ghost" size="sm" onClick={() => setInputInfo("")}>Cancel</Button>
-                <Button onClick={() => onRunAnonymization(taskContext)} size="sm" disabled={isProcessing}>
-                    {isProcessing ? "Processing..." : "Run Anonymization"}
+                <Button variant="ghost" size="sm" onClick={() => setInputInfo("")}>クリア</Button>
+                <Button
+                    onClick={() => onRunAnonymization(taskContext)}
+                    size="sm"
+                    disabled={isProcessing || !currentContent}
+                    className="bg-green-600 hover:bg-green-700"
+                >
+                    {isProcessing ? "処理中..." : "実行"}
                 </Button>
             </div>
          </div>
