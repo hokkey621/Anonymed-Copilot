@@ -5,13 +5,23 @@ interface EditorPanelProps {
   original?: string;
   modified?: string;
   onAccept: () => void;
+  onModifiedChange?: (value: string) => void;
 }
 
-export function EditorPanel({ original = "", modified = "", onAccept }: EditorPanelProps) {
+export function EditorPanel({ original = "", modified = "", onAccept, onModifiedChange }: EditorPanelProps) {
   const hasChanges = original !== modified;
 
   const handleCopy = () => {
        navigator.clipboard.writeText(modified);
+  };
+
+  const handleEditorDidMount = (editor: any) => {
+      const modifiedEditor = editor.getModifiedEditor();
+      modifiedEditor.onDidChangeModelContent(() => {
+          if (onModifiedChange) {
+              onModifiedChange(modifiedEditor.getValue());
+          }
+      });
   };
 
   return (
@@ -51,12 +61,13 @@ export function EditorPanel({ original = "", modified = "", onAccept }: EditorPa
             modified={modified}
             language="plaintext"
             theme="light"
+            onMount={handleEditorDidMount}
             options={{
                 readOnly: false,
                 renderSideBySide: true,
                 minimap: { enabled: false },
                 scrollBeyondLastLine: false,
-                originalEditable: true, // Allow editing left side to correct manually
+                originalEditable: false, // Usually original shouldn't be edited
             }}
          />
       </div>

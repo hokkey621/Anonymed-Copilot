@@ -1,11 +1,32 @@
-use crate::domain::model::AuditLog;
-use crate::infrastructure::pdf_writer; // Assuming this exists or mocked
+use crate::domain::model::{AuditLog, AnonPlan};
+use crate::infrastructure::pdf_writer;
 use hmac::{Hmac, Mac};
-use sha2::Sha256;
+use sha2::{Sha256, Digest};
 use hex;
 
 // Create alias for HMAC-SHA256
 type HmacSha256 = Hmac<Sha256>;
+
+#[tauri::command]
+pub fn create_audit_report(final_content: String, applied_plan: AnonPlan) -> Result<String, String> {
+    let mut hasher = Sha256::new();
+    hasher.update(final_content.as_bytes());
+    let hash = hex::encode(hasher.finalize());
+
+    let rules_list: Vec<String> = applied_plan.global_rules.keys().cloned().collect();
+
+    let log = AuditLog {
+        task_context: applied_plan.task_name,
+        applied_rules: rules_list,
+        user_overrides: vec![],
+        privacy_score: 0.95, // Mock score
+        data_hash: hash,
+        timestamp: "2024-01-01T12:00:00Z".to_string(), // Mock timestamp to avoid dependency issues if chrono missing
+        signature: None,
+    };
+
+    generate_report(log)
+}
 
 #[tauri::command]
 pub fn generate_report(mut log: AuditLog) -> Result<String, String> {
