@@ -24,6 +24,15 @@ pub struct BulkProgressEvent {
     pub current_file: String,
     pub step_id: String,
     pub step_status: String,
+    pub step_message: String, // e.g., "3省2ガイドラインに基づき検証中..."
+}
+
+/// Warning from dry run validation
+#[derive(Clone, Serialize)]
+pub struct DryRunWarning {
+    pub file_name: String,
+    pub warning_type: String, // "long_name", "encoding", "pattern_mismatch"
+    pub message: String,
 }
 
 /// Result of a dry run validation
@@ -32,6 +41,7 @@ pub struct DryRunResult {
     pub total_files: usize,
     pub success_count: usize,
     pub error_files: Vec<String>,
+    pub warnings: Vec<DryRunWarning>,
 }
 
 /// Apply replacement plan to text (no API calls - fast rule-based)
@@ -95,11 +105,32 @@ pub async fn bulk_dry_run(
 
     let total_files = entries.len();
     let mut error_files = Vec::new();
+    let mut warnings = Vec::new();
 
     for entry in &entries {
         let file_path = entry.path();
-        if fs::read_to_string(&file_path).is_err() {
-            error_files.push(file_path.display().to_string());
+        let file_name_str = file_path.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        match fs::read_to_string(&file_path) {
+            Ok(content) => {
+                // Check for long proper nouns (simple heuristic: words > 15 chars)
+                let long_words: Vec<&str> = content.split_whitespace()
+                    .filter(|w| w.chars().count() > 15 && w.chars().next().map(|c| c.is_uppercase()).unwrap_or(false))
+                    .collect();
+
+                if !long_words.is_empty() {
+                    warnings.push(DryRunWarning {
+                        file_name: file_name_str.clone(),
+                        warning_type: "long_name".to_string(),
+                        message: format!("通常より長い固有名詞を検知: {} 個", long_words.len()),
+                    });
+                }
+            },
+            Err(_) => {
+                error_files.push(file_path.display().to_string());
+            }
         }
     }
 
@@ -107,6 +138,7 @@ pub async fn bulk_dry_run(
         total_files,
         success_count: total_files - error_files.len(),
         error_files,
+        warnings,
     })
 }
 
@@ -135,6 +167,7 @@ pub async fn bulk_execute(
         current_file: "".to_string(),
         step_id: "validation".to_string(),
         step_status: "running".to_string(),
+        step_message: "3省2ガイドラインに基づき、全ファイルの読み込み可否を検証中...".to_string(),
     });
 
     // Collect files
@@ -153,6 +186,7 @@ pub async fn bulk_execute(
         current_file: "".to_string(),
         step_id: "validation".to_string(),
         step_status: "completed".to_string(),
+        step_message: format!("{}件のファイルの検証が完了しました", total),
     });
 
     let _ = app.emit("bulk-progress", BulkProgressEvent {
@@ -161,6 +195,7 @@ pub async fn bulk_execute(
         current_file: "".to_string(),
         step_id: "execution".to_string(),
         step_status: "running".to_string(),
+        step_message: "並列処理を開始します...".to_string(),
     });
 
     // Shared counters for parallel progress
@@ -213,6 +248,7 @@ pub async fn bulk_execute(
             current_file: file_name.clone(),
             step_id: "execution".to_string(),
             step_status: "running".to_string(),
+            step_message: format!("処理中: {}", file_name),
         });
 
         // Create audit log
@@ -238,6 +274,7 @@ pub async fn bulk_execute(
         current_file: "".to_string(),
         step_id: "execution".to_string(),
         step_status: "completed".to_string(),
+        step_message: format!("全{}件の変換が完了しました", total),
     });
 
     // Emit: Audit step
@@ -247,6 +284,7 @@ pub async fn bulk_execute(
         current_file: "".to_string(),
         step_id: "audit".to_string(),
         step_status: "running".to_string(),
+        step_message: "監査ログとハッシュ値を記録中...".to_string(),
     });
 
     let valid_logs: Vec<AuditLog> = logs.into_iter().flatten().collect();
@@ -259,6 +297,7 @@ pub async fn bulk_execute(
         current_file: output_dir.display().to_string(),
         step_id: "audit".to_string(),
         step_status: "completed".to_string(),
+        step_message: format!("出力先: {}", output_dir.display()),
     });
 
     Ok(BatchResult {
