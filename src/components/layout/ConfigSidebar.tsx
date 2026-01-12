@@ -250,7 +250,7 @@ export function ConfigSidebar({
             value={inputInfo}
             onChange={(e) => setInputInfo(e.target.value)}
             placeholder={currentContent ? "質問を入力..." : "テキストを選択してください"}
-            onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
+            onKeyDown={(e) => e.key === 'Enter' && e.metaKey && handleSendMessage()}
             disabled={!currentContent || isProcessing}
           />
           <Button
