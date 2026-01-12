@@ -1,7 +1,7 @@
 use crate::domain::model::AuditLog;
 use std::fs;
 use std::path::Path;
-use crate::infrastructure::gemini_handler::GeminiHandler;
+use crate::domain::agent_orchestrator::AgentOrchestrator;
 
 #[derive(serde::Serialize)]
 pub struct BatchResult {
@@ -12,6 +12,7 @@ pub struct BatchResult {
 
 #[tauri::command]
 pub async fn process_bulk(
+    app: tauri::AppHandle,
     dir_path: String,
     model_version_hash: String, // Traceability
 ) -> Result<BatchResult, String> {
@@ -20,8 +21,8 @@ pub async fn process_bulk(
         return Err("Path is not a directory".into());
     }
 
-    // 1. Initialize Gemini Handler
-    let handler = GeminiHandler::new()?;
+    // 1. Initialize Orchestrator
+    let orchestrator = AgentOrchestrator::new()?;
 
     // 2. List files
     let entries: Vec<_> = fs::read_dir(path)
@@ -46,23 +47,14 @@ pub async fn process_bulk(
              }
         };
 
-        // Analyze with Gemini
+        // Analyze with Orchestrator
         // We use the same task context format as in interactive mode
         let task_context = format!("Bulk Anonymization (Trace: {})", model_version_hash);
-        let analysis_result = handler.analyze(&content, &task_context).await;
+        let analysis_result = orchestrator.run_anonymization_pipeline(&app, &content, &task_context).await;
 
         match analysis_result {
-            Ok(replacements) => {
-                 // Serialize replacements to string for AuditLog (matching previous structure)
-                 // Or we could store them properly if AuditLog structure allowed.
-                 // Assuming AuditLog expects Vec<String> for applied_rules based on previous code:
-                 // "applied_rules: _plan_items"
-                 // Check domain::model::AuditLog definition if possible.
-                 // In previous code `_plan_items = state.run_inference(&content)` returned Vec<String>?
-                 // Checking OnnxSession would be good but I deleted it.
-                 // Assuming Vec<String> for now.
-
-                 let applied_rules: Vec<String> = replacements.iter()
+            Ok(plan) => {
+                 let applied_rules: Vec<String> = plan.replacements.iter()
                     .map(|r| format!("{} -> {} ({})", r.original, r.replacement, r.reason))
                     .collect();
 

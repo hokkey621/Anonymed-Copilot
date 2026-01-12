@@ -11,30 +11,39 @@ struct GeminiResponse {
 }
 
 #[derive(Serialize)]
-struct GeminiRequest {
-    contents: Vec<Content>,
+pub struct GeminiRequest {
+    pub contents: Vec<Content>,
+    pub system_instruction: Option<SystemInstruction>,
     #[serde(rename = "generationConfig")]
-    generation_config: GenerationConfig,
+    pub generation_config: GenerationConfig,
 }
 
 #[derive(Serialize)]
-struct Content {
-    role: String,
-    parts: Vec<Part>,
+pub struct SystemInstruction {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    pub parts: Vec<Part>,
 }
 
 #[derive(Serialize)]
-struct Part {
-    text: String,
+pub struct Content {
+    pub role: String,
+    pub parts: Vec<Part>,
 }
 
 #[derive(Serialize)]
-struct GenerationConfig {
-    temperature: f32,
+pub struct Part {
+    pub text: String,
+}
+
+#[derive(Serialize)]
+pub struct GenerationConfig {
+    pub temperature: f32,
     #[serde(rename = "responseMimeType")]
-    response_mime_type: String,
+    pub response_mime_type: String,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 struct GeminiOutput {
     replacements: Vec<ReplacementEntry>,
@@ -96,22 +105,32 @@ impl GeminiHandler {
         }
     }
 
-    /// Analyze text and return structured replacements (for Execute button)
-    pub async fn analyze(&self, text: &str, task_context: &str) -> Result<Vec<ReplacementEntry>, String> {
-        let specialized_instruction = match task_context {
-            "Vaccine Study" | "Vaccine Development" => "CRITICAL: Maintain the graphical intervals between dates. Anonymize specific dates to relative days (Day 0, Day 14). Unify facility names to Site A, Site B.",
-            "Educational Material" | "Case Study" => "CRITICAL: Preserve key medical condition names and general demographics. Only anonymize direct identifiers.",
-            _ => "Anonymize ALL personal identifiers including Names, Dates, IDs, Locations, and Hospital names.",
+    /// Generic method to call Gemini with a system prompt and parse JSON output
+    pub async fn generate_structure<T: serde::de::DeserializeOwned>(
+        &self,
+        user_prompt: &str,
+        system_prompt: &str,
+        text_context: Option<&str>,
+    ) -> Result<T, String> {
+        let full_user_content = if let Some(ctx) = text_context {
+            format!("{}\n\nContext Text:\n{}", user_prompt, ctx)
+        } else {
+            user_prompt.to_string()
         };
 
-        let system_prompt = format!(
-            "You are an elite medical privacy specialist. Task: Anonymize the text below for context: '{}'. Rules: 1. {} 2. Return JSON with 'replacements' array. Each object: 'original' (exact text), 'replacement', 'start', 'end', 'reason', 'category'. 3. STRICT JSON.",
-            task_context, specialized_instruction
-        );
-
         let request_body = GeminiRequest {
-            contents: vec![Content { role: "user".to_string(), parts: vec![Part { text: format!("{}\n\nText:\n{}", system_prompt, text) }] }],
-            generation_config: GenerationConfig { temperature: 0.1, response_mime_type: "application/json".to_string() },
+            contents: vec![Content {
+                role: "user".to_string(),
+                parts: vec![Part { text: full_user_content }],
+            }],
+            system_instruction: Some(SystemInstruction {
+                role: None,
+                parts: vec![Part { text: system_prompt.to_string() }],
+            }),
+            generation_config: GenerationConfig {
+                temperature: 0.1,
+                response_mime_type: "application/json".to_string(),
+            },
         };
 
         let response = self.send_with_retry(&request_body).await?;
@@ -119,18 +138,22 @@ impl GeminiHandler {
 
         if let Some(candidate) = resp_json.candidates.first() {
             if let Some(part) = candidate.content.parts.first() {
-                let wrapper: GeminiOutput = serde_json::from_str(&part.text)
-                    .map_err(|e| format!("Failed to parse Gemini JSON: {}. Text: {}", e, part.text))?;
-                return Ok(wrapper.replacements);
+                serde_json::from_str(&part.text).map_err(|e| {
+                    format!("Failed to parse JSON: {}. Text: {}", e, part.text)
+                })
+            } else {
+                Err("No content part in candidate".to_string())
             }
+        } else {
+            Err("No candidates returned".to_string())
         }
-        Err("No content generated".to_string())
     }
 
-    /// Simple chat for conversational discussion (no structured JSON)
-    pub async fn chat(&self, message: &str) -> Result<String, String> {
+    /// Multi-turn chat with history
+    pub async fn chat(&self, history: Vec<Content>) -> Result<String, String> {
         let request_body = GeminiRequest {
-            contents: vec![Content { role: "user".to_string(), parts: vec![Part { text: message.to_string() }] }],
+            contents: history,
+            system_instruction: None,
             generation_config: GenerationConfig { temperature: 0.7, response_mime_type: "text/plain".to_string() },
         };
 
