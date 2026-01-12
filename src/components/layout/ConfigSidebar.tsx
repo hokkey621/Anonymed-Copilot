@@ -2,7 +2,9 @@ import { useState, useRef, useEffect } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { ChatMessage } from "@/components/chat/ChatMessage";
+import { ProgressIndicator, AgentProgressEvent } from "./ProgressIndicator";
 import { Send, ChevronDown } from "lucide-react";
 
 interface Message {
@@ -31,7 +33,30 @@ export function ConfigSidebar({ onRunAnonymization, isProcessing, currentContent
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [taskContext, setTaskContext] = useState("Medical Case Study");
   const [showTaskDropdown, setShowTaskDropdown] = useState(false);
+  const [progressEvent, setProgressEvent] = useState<AgentProgressEvent | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Listen for agent progress
+  useEffect(() => {
+    const unlisten = listen<AgentProgressEvent>("agent-progress", (event) => {
+        setProgressEvent(event.payload);
+    });
+
+    return () => {
+        unlisten.then(f => f());
+    };
+  }, []);
+
+  // Reset progress when processing starts/stops
+  useEffect(() => {
+    if (!isProcessing) {
+        // Keep the last success state for a bit? Or just reset if it was successful?
+        // Let's keep it visible until user interacts or new run starts.
+        // Actually, let's reset it when new run starts.
+    } else {
+        setProgressEvent({ step: 'Planner', status: 'In Progress', message: 'Starting agent...' });
+    }
+  }, [isProcessing]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -48,14 +73,57 @@ export function ConfigSidebar({ onRunAnonymization, isProcessing, currentContent
     setInputInfo("");
     setIsChatLoading(true);
 
-    try {
-      let prompt = inputInfo;
-      if (currentContent && currentContent.trim().length > 0) {
-        prompt = `以下のテキストについて相談があります:\n---\n${currentContent.slice(0, 500)}${currentContent.length > 500 ? '...' : ''}\n---\n\n質問: ${inputInfo}`;
-      }
+    // Construct history for the backend
+    // If it's the very first user interaction involving the document, inject the FULL content.
+    // For subsequent turns, just send the messages as is (the backend is stateless between calls, so we send full history every time).
+    // WAIT: The backend is "stateless" meaning we must send the WHOLE history every time.
 
-      const response = await invoke<string>("chat_with_ai", { message: prompt });
+    // 1. Prepare the new message list including the latest user message
+    const newHistory = [...messages, userMsg];
+
+    // 2. Map to the format backend expects.
+    // Optimization: If the conversation is long, we might need to prune, but Gemini has a huuuuge context.
+    // We inject the document into the SYSTEM context or the First User Message if it's not there.
+
+    let apiMessages = newHistory.map(m => ({ role: m.role, content: m.content }));
+
+    // If there is document content, ensuring it is part of the context.
+    // We treat the first message's context injection carefully.
+    if (currentContent && currentContent.trim().length > 0) {
+        // If the first message doesn't have the context, prepending a system-like user message or modifying the first message.
+        // For simplicity: We prepend a context message if it's not already established.
+        // Actually, let's just prepend a context frame if it's the start.
+        if (messages.length === 1) { // Only the initial greeting exists
+             apiMessages = [
+                 messages[0], // Greeting
+                 { role: "user", content: `Context Document:\n${currentContent}\n\nUser Question: ${inputInfo}` }
+             ];
+             // Update local state to show just the question, but we send context to API?
+             // Better: Just send the context in the API call but keep UI clean.
+        } else {
+             // For later turns, we just assume the history carries the context if we sent it before?
+             // No, the backend `chat` is stateless. We must send the history where one of the messages *contained* the context.
+             // So if we modified the message sent to API in turn 1, we must keep sending that modified version.
+             // This implies `messages` state should nominally hold the full context?
+             // Or we keep a separate "apiHistory" state?
+             // Let's refine: We will inject context into the LAST message if it's the first time user speaks.
+
+             // actually, simplest valid approach for now:
+             // On every request, if we are in "analysis mode", we prepend the system context.
+             // But purely for chat, let's just prepend the document to the *first* legitimate user message in the history.
+
+             const firstUserIndex = apiMessages.findIndex(m => m.role === "user");
+             if (firstUserIndex !== -1) {
+                 apiMessages[firstUserIndex].content = `[Document Context]:\n${currentContent}\n\n[User]: ${apiMessages[firstUserIndex].content}`;
+             }
+        }
+    }
+
+    try {
+      // Sending the array of messages
+      const response = await invoke<string>("chat_with_ai", { messages: apiMessages });
       setMessages(prev => [...prev, { role: "assistant", content: response }]);
+
 
       // Auto-detect task context
       const lowerInput = inputInfo.toLowerCase();
@@ -113,6 +181,17 @@ export function ConfigSidebar({ onRunAnonymization, isProcessing, currentContent
           )}
         </div>
       </div>
+
+      {/* Progress Indicator */}
+      {(isProcessing || progressEvent) && (
+        <div className="px-3 pt-2">
+            <ProgressIndicator
+                currentStep={progressEvent?.step || 'Planner'}
+                status={progressEvent?.status || 'In Progress'}
+                message={progressEvent?.message || 'Ready to start...'}
+            />
+        </div>
+      )}
 
       {/* Chat Messages */}
       <ScrollArea className="flex-1" ref={scrollRef}>
