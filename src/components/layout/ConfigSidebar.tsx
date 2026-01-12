@@ -33,6 +33,7 @@ interface BulkProgressEvent {
   current_file: string;
   step_id: string;
   step_status: string;
+  step_message: string;
 }
 
 interface AgentChatResponse {
@@ -73,7 +74,7 @@ export function ConfigSidebar({
   const [taskContext, setTaskContext] = useState("Medical Case Study");
   const [showTaskDropdown, setShowTaskDropdown] = useState(false);
   const [progressEvent, setProgressEvent] = useState<AgentProgressEvent | null>(null);
-  const [bulkProgress, setBulkProgress] = useState<{ completed: number; total: number } | null>(null);
+  const [bulkProgress, setBulkProgress] = useState<{ completed: number; total: number; currentFile?: string } | null>(null);
   const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([]);
   const [isBulkExecuting, setIsBulkExecuting] = useState(false);
   const [activeBulkPlan, setActiveBulkPlan] = useState<BulkExecutionPlan | null>(null);
@@ -93,8 +94,8 @@ export function ConfigSidebar({
   // Listen for bulk progress
   useEffect(() => {
     const unlisten = listen<BulkProgressEvent>("bulk-progress", (event) => {
-      const { completed, total, step_id, step_status } = event.payload;
-      setBulkProgress({ completed, total });
+      const { completed, total, current_file, step_id, step_status } = event.payload;
+      setBulkProgress({ completed, total, currentFile: current_file });
 
       // Update workflow steps
       setWorkflowSteps(prev => prev.map(step =>
@@ -199,8 +200,15 @@ export function ConfigSidebar({
   };
 
   const handleBulkCommit = async () => {
-    if (!currentDirPath || !currentPlan) {
-      console.error("No directory path or plan available for bulk execution");
+    // For single file mode (no directory path), use the normal execution flow
+    if (!currentDirPath) {
+      onRunAnonymization(taskContext);
+      return;
+    }
+
+    // For bulk mode with directory path
+    if (!currentPlan) {
+      console.error("No plan available for bulk execution");
       return;
     }
 
