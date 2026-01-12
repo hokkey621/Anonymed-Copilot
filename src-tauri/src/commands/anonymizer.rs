@@ -110,13 +110,18 @@ pub async fn agent_chat(
     // Enhanced system prompt for bulk execution
     let system_context = if is_bulk_request {
         format!(
-            r#"You are an anonymization agent assistant. The user has {} files to process.
-They are requesting bulk execution. Respond helpfully about the bulk operation.
-Be concise and confirm you understand they want to apply the current plan to all files."#,
-            file_count
+            r#"あなたは医療データ匿名化の専門エージェントです。ユーザーは{}件のファイルの一括処理を希望しています。
+
+応答では以下を含めてください：
+1. 3省2ガイドライン（厚労省・経産省・総務省の医療情報ガイドライン）の観点から、なぜこの手順で処理するかを簡潔に説明
+2. 処理はまず全ファイルの検証（バリデーション）から開始し、その後並列処理を行う旨を伝える
+3. 元データは一切変更せず、別ディレクトリに出力することを強調
+
+例: 「承知しました。3省2ガイドラインの観点から、まず全{}件の読み込み可否を検証し、問題がなければ並列処理を開始します。元データは変更せず、anonymized_outputsフォルダに安全に出力します。」"#,
+            file_count, file_count
         )
     } else {
-        "You are an anonymization agent assistant. Help users understand and refine their anonymization requirements.".to_string()
+        "あなたは医療データ匿名化の専門エージェントです。ユーザーの匿名化要件を理解し、最適な処理方法を提案してください。3省2ガイドライン等の規制に準拠した安全な処理を心がけてください。".to_string()
     };
 
     // Prepend system context to first user message
@@ -133,43 +138,42 @@ Be concise and confirm you understand they want to apply the current plan to all
 
     let ai_response = handler.chat(history).await?;
 
-    // Generate bulk plan if this is a bulk request
-    let (bulk_plan, workflow_steps) = if is_bulk_request && file_count > 0 {
-        // Estimate ~50ms per file for rule-based replacement (no API calls)
-        let estimated_time = (file_count as u64) * 50;
+    // Always generate execution plan for visual feedback (even for single file)
+    // Use at least 1 file count if none provided
+    let effective_count = if file_count > 0 { file_count } else { 1 };
 
-        let plan = BulkExecutionPlan {
-            target_count: file_count,
-            estimated_time_ms: estimated_time,
-            policy_summary: vec![
-                "Apply approved replacement rules".to_string(),
-                "Output to separate directory".to_string(),
-                "Generate SHA-256 hashes for audit".to_string(),
-            ],
-        };
+    // Estimate ~50ms per file for rule-based replacement (no API calls)
+    let estimated_time = (effective_count as u64) * 50;
 
-        let steps = vec![
-            WorkflowStep {
-                id: "validation".to_string(),
-                label: "Validation (Dry Run)".to_string(),
-                status: "pending".to_string(),
-            },
-            WorkflowStep {
-                id: "execution".to_string(),
-                label: "Parallel Execution".to_string(),
-                status: "pending".to_string(),
-            },
-            WorkflowStep {
-                id: "audit".to_string(),
-                label: "Audit Log Generation".to_string(),
-                status: "pending".to_string(),
-            },
-        ];
-
-        (Some(plan), Some(steps))
-    } else {
-        (None, None)
+    let plan = BulkExecutionPlan {
+        target_count: effective_count,
+        estimated_time_ms: estimated_time,
+        policy_summary: vec![
+            "Apply approved replacement rules".to_string(),
+            "Output to separate directory".to_string(),
+            "Generate SHA-256 hashes for audit".to_string(),
+        ],
     };
+
+    let steps = vec![
+        WorkflowStep {
+            id: "validation".to_string(),
+            label: "Validation (Dry Run)".to_string(),
+            status: "pending".to_string(),
+        },
+        WorkflowStep {
+            id: "execution".to_string(),
+            label: if effective_count > 1 { "Parallel Execution".to_string() } else { "Execution".to_string() },
+            status: "pending".to_string(),
+        },
+        WorkflowStep {
+            id: "audit".to_string(),
+            label: "Audit Log Generation".to_string(),
+            status: "pending".to_string(),
+        },
+    ];
+
+    let (bulk_plan, workflow_steps) = (Some(plan), Some(steps));
 
     Ok(AgentChatResponse {
         message: ai_response,
