@@ -1,20 +1,15 @@
 use crate::domain::model::AnonPlan;
 use crate::infrastructure::gemini_handler::GeminiHandler;
+use crate::domain::agent_orchestrator::AgentOrchestrator;
 use zeroize::Zeroize;
-use std::collections::HashMap;
 
-/// Analyze text and generate an anonymization plan
+/// Analyze text and generate an anonymization plan using Multi-Agent Orchestrator
 #[tauri::command]
-pub async fn analyze_text(text: String, task_context: String) -> Result<AnonPlan, String> {
-    let handler = GeminiHandler::new()?;
-    let replacements = handler.analyze(&text, &task_context).await?;
-
-    Ok(AnonPlan {
-        task_name: task_context,
-        global_rules: HashMap::new(),
-        replacements,
-        status: "draft".to_string(),
-    })
+pub async fn analyze_text(app: tauri::AppHandle, text: String, task_context: String) -> Result<AnonPlan, String> {
+    let orchestrator = AgentOrchestrator::new()?;
+    // The user's input "task_context" here is effectively the prompt for the Planner (e.g. "Vaccine Study")
+    let plan = orchestrator.run_anonymization_pipeline(&app, &text, &task_context).await?;
+    Ok(plan)
 }
 
 /// Apply the anonymization plan to the text
@@ -56,11 +51,25 @@ pub fn apply_plan(mut text: String, plan: AnonPlan) -> Result<String, String> {
     Ok(processed)
 }
 
-/// Simple conversational chat with AI (no plan modification)
+#[derive(serde::Deserialize)]
+pub struct ChatMessage {
+    role: String,
+    content: String,
+}
+
+use crate::infrastructure::gemini_handler::{Content, Part};
+
+/// Conversational chat with AI (supports history)
 #[tauri::command]
-pub async fn chat_with_ai(message: String) -> Result<String, String> {
+pub async fn chat_with_ai(messages: Vec<ChatMessage>) -> Result<String, String> {
     let handler = GeminiHandler::new()?;
-    handler.chat(&message).await
+
+    let history: Vec<Content> = messages.into_iter().map(|m| Content {
+        role: if m.role == "assistant" { "model".to_string() } else { "user".to_string() },
+        parts: vec![Part { text: m.content }],
+    }).collect();
+
+    handler.chat(history).await
 }
 
 #[cfg(test)]
