@@ -11,10 +11,13 @@ pub fn run() {
             commands::anonymizer::analyze_text,
             commands::anonymizer::apply_plan,
             commands::anonymizer::chat_with_ai,
+            commands::anonymizer::agent_chat,
             commands::audit::generate_report,
             commands::audit::create_audit_report,
             commands::audit::generate_public_notice,
-            commands::batch::process_bulk
+            commands::batch::process_bulk,
+            commands::batch::bulk_execute,
+            commands::batch::bulk_dry_run
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

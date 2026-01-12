@@ -13,7 +13,9 @@ pub struct MedicalRecord {
 pub struct ReplacementEntry {
     pub original: String,
     pub replacement: String,
+    #[serde(default)]
     pub start: usize,
+    #[serde(default)]
     pub end: usize,
     pub reason: String,
     pub category: Option<String>,
@@ -50,4 +52,20 @@ pub struct AuditLog {
     pub data_hash: String,
     pub timestamp: String,
     pub signature: Option<String>, // HMAC Signature
+}
+
+/// Plan for bulk execution across multiple files
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BulkExecutionPlan {
+    pub target_count: usize,
+    pub estimated_time_ms: u64,
+    pub policy_summary: Vec<String>,
+}
+
+/// Individual step in a workflow
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowStep {
+    pub id: String,
+    pub label: String,
+    pub status: String, // "pending" | "running" | "completed" | "failed"
 }

@@ -72,6 +72,113 @@ pub async fn chat_with_ai(messages: Vec<ChatMessage>) -> Result<String, String> 
     handler.chat(history).await
 }
 
+use crate::domain::model::{BulkExecutionPlan, WorkflowStep};
+use serde::Serialize;
+
+/// Response from agent chat that may include bulk execution plan
+#[derive(Serialize)]
+pub struct AgentChatResponse {
+    pub message: String,
+    pub bulk_plan: Option<BulkExecutionPlan>,
+    pub workflow_steps: Option<Vec<WorkflowStep>>,
+}
+
+/// Check if the user message indicates bulk execution intent
+fn detect_bulk_intent(messages: &[ChatMessage]) -> bool {
+    let bulk_keywords = [
+        "全件", "全て", "すべて", "一括", "バルク", "まとめて",
+        "apply to all", "bulk", "all files", "batch"
+    ];
+
+    if let Some(last_user_msg) = messages.iter().rev().find(|m| m.role == "user") {
+        let lower_content = last_user_msg.content.to_lowercase();
+        return bulk_keywords.iter().any(|kw| lower_content.contains(kw));
+    }
+    false
+}
+
+/// Enhanced agent chat that supports bulk execution planning
+#[tauri::command]
+pub async fn agent_chat(
+    messages: Vec<ChatMessage>,
+    file_count: usize,
+) -> Result<AgentChatResponse, String> {
+    let handler = GeminiHandler::new()?;
+
+    let is_bulk_request = detect_bulk_intent(&messages);
+
+    // Enhanced system prompt for bulk execution
+    let system_context = if is_bulk_request {
+        format!(
+            r#"You are an anonymization agent assistant. The user has {} files to process.
+They are requesting bulk execution. Respond helpfully about the bulk operation.
+Be concise and confirm you understand they want to apply the current plan to all files."#,
+            file_count
+        )
+    } else {
+        "You are an anonymization agent assistant. Help users understand and refine their anonymization requirements.".to_string()
+    };
+
+    // Prepend system context to first user message
+    let mut history: Vec<Content> = messages.iter().map(|m| Content {
+        role: if m.role == "assistant" { "model".to_string() } else { "user".to_string() },
+        parts: vec![Part { text: m.content.clone() }],
+    }).collect();
+
+    if !history.is_empty() {
+        if let Some(first) = history.first_mut() {
+            first.parts[0].text = format!("[System]: {}\n\n{}", system_context, first.parts[0].text);
+        }
+    }
+
+    let ai_response = handler.chat(history).await?;
+
+    // Generate bulk plan if this is a bulk request
+    let (bulk_plan, workflow_steps) = if is_bulk_request && file_count > 0 {
+        // Estimate ~50ms per file for rule-based replacement (no API calls)
+        let estimated_time = (file_count as u64) * 50;
+
+        let plan = BulkExecutionPlan {
+            target_count: file_count,
+            estimated_time_ms: estimated_time,
+            policy_summary: vec![
+                "Apply approved replacement rules".to_string(),
+                "Output to separate directory".to_string(),
+                "Generate SHA-256 hashes for audit".to_string(),
+            ],
+        };
+
+        let steps = vec![
+            WorkflowStep {
+                id: "validation".to_string(),
+                label: "Validation (Dry Run)".to_string(),
+                status: "pending".to_string(),
+            },
+            WorkflowStep {
+                id: "execution".to_string(),
+                label: "Parallel Execution".to_string(),
+                status: "pending".to_string(),
+            },
+            WorkflowStep {
+                id: "audit".to_string(),
+                label: "Audit Log Generation".to_string(),
+                status: "pending".to_string(),
+            },
+        ];
+
+        (Some(plan), Some(steps))
+    } else {
+        (None, None)
+    };
+
+    Ok(AgentChatResponse {
+        message: ai_response,
+        bulk_plan,
+        workflow_steps,
+    })
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
