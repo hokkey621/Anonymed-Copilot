@@ -1,4 +1,4 @@
-import { Check, Clock, Loader2, AlertCircle, Shield, Zap, AlertTriangle, FolderOpen, ListChecks, Play } from 'lucide-react';
+import { Check, Clock, Loader2, AlertCircle, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 interface KeyTransformation {
@@ -19,7 +19,6 @@ interface BulkExecutionPlan {
 interface WorkflowStep {
   id: string;
   label: string;
-  description?: string;
   status: 'pending' | 'running' | 'completed' | 'failed';
 }
 
@@ -35,178 +34,124 @@ interface BulkPlanCardProps {
   };
 }
 
-// Default transformations if not provided
+// Default transformations
 const DEFAULT_TRANSFORMATIONS: KeyTransformation[] = [
-  { rule: "全ての日付を「Day 0」からの相対表記に変換", enabled: true },
-  { rule: "施設名を「施設[A-Z]」に抽象化", enabled: true },
-  { rule: "90歳以上の年齢を「90+」に丸め", enabled: true },
+  { rule: "日付を相対表記に変換", enabled: true },
+  { rule: "施設名を抽象化", enabled: true },
+  { rule: "90歳以上を「90+」に", enabled: true },
 ];
 
-// Step descriptions explaining why each step is important
+// Step descriptions
 const STEP_DESCRIPTIONS: Record<string, string> = {
-  validation: "3省2ガイドラインの観点から、まず全ファイルの読み込み可否を検証します",
-  dry_run: "メモリ上で仮置換を実行し、不整合やエラーを事前に検出します",
-  execution: "検証済みファイルを並列処理で一括変換します",
-  staging: "変更内容をプレビュー可能な状態で保持します",
-  audit: "法的トレーサビリティのため、監査ログとハッシュ値を記録します",
+  validation: "ファイルの読み込み可否を検証",
+  dry_run: "仮置換で不整合をチェック",
+  execution: "並列処理で一括変換",
+  audit: "監査ログとハッシュを記録",
 };
 
 function StepIcon({ status }: { status: string }) {
   switch (status) {
     case 'completed':
-      return <Check className="w-4 h-4 text-green-500" />;
+      return <Check className="w-3 h-3 text-green-500" />;
     case 'running':
-      return <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />;
+      return <Loader2 className="w-3 h-3 text-blue-500 animate-spin" />;
     case 'failed':
-      return <AlertCircle className="w-4 h-4 text-red-500" />;
+      return <AlertCircle className="w-3 h-3 text-red-500" />;
     default:
-      return <Clock className="w-4 h-4 text-slate-400" />;
+      return <Clock className="w-3 h-3 text-muted-foreground" />;
   }
 }
 
 export function BulkPlanCard({ plan, workflowSteps, onCommit, isExecuting, progress }: BulkPlanCardProps) {
-  const estimatedSeconds = Math.ceil(plan.estimated_time_ms / 1000);
   const progressPercent = progress ? Math.round((progress.completed / progress.total) * 100) : 0;
   const transformations = plan.key_transformations || DEFAULT_TRANSFORMATIONS;
+  const estimatedSeconds = Math.ceil(plan.estimated_time_ms / 1000);
 
   return (
-    <div className="rounded-xl border-2 border-purple-300 dark:border-purple-700 bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-950/40 dark:to-pink-950/40 overflow-hidden shadow-xl">
+    <div className="rounded-md border bg-muted/30 text-sm">
       {/* Header */}
-      <div className="px-4 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white">
-        <div className="flex items-center gap-2">
-          <Zap className="w-5 h-5" />
-          <h3 className="font-bold text-lg">Plan: Bulk Anonymization</h3>
-        </div>
+      <div className="px-3 py-2 border-b bg-muted/50 flex items-center justify-between">
+        <span className="font-medium">実行プラン</span>
+        <span className="text-xs text-muted-foreground">
+          {plan.target_count} ファイル · 約{estimatedSeconds}秒
+        </span>
       </div>
 
-      <div className="p-4 space-y-4">
-        {/* Target Scope */}
-        <div className="bg-white/70 dark:bg-slate-800/70 rounded-lg p-3 border border-purple-100 dark:border-purple-900">
-          <div className="flex items-center gap-2 mb-2">
-            <FolderOpen className="w-4 h-4 text-purple-500" />
-            <span className="text-sm font-semibold">Target Scope</span>
-          </div>
-          <div className="text-sm text-muted-foreground font-mono bg-slate-100 dark:bg-slate-900 px-2 py-1 rounded">
-            {plan.target_scope || "選択されたディレクトリ"} 内の全 <span className="font-bold text-purple-600 dark:text-purple-400">{plan.target_count.toLocaleString()}</span> ファイル
-          </div>
-        </div>
-
-        {/* Stats Row */}
-        <div className="grid grid-cols-2 gap-3">
-          <div className="flex items-center gap-2 bg-white/60 dark:bg-slate-800/60 rounded-lg p-3 border border-slate-200 dark:border-slate-700">
-            <Shield className="w-5 h-5 text-green-500" />
-            <div>
-              <div className="text-xs text-muted-foreground">Applied Policy</div>
-              <div className="font-semibold text-sm">{plan.applied_policy || "Medical Privacy (v1.0)"}</div>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 bg-white/60 dark:bg-slate-800/60 rounded-lg p-3 border border-slate-200 dark:border-slate-700">
-            <Clock className="w-5 h-5 text-blue-500" />
-            <div>
-              <div className="text-xs text-muted-foreground">推定時間</div>
-              <div className="font-semibold text-sm">{estimatedSeconds < 60 ? `${estimatedSeconds} 秒` : `${Math.ceil(estimatedSeconds / 60)} 分`}</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Key Transformations Checklist */}
-        <div className="bg-white/70 dark:bg-slate-800/70 rounded-lg p-3 border border-purple-100 dark:border-purple-900">
-          <div className="flex items-center gap-2 mb-3">
-            <ListChecks className="w-4 h-4 text-purple-500" />
-            <span className="text-sm font-semibold">Key Transformations</span>
-          </div>
-          <div className="space-y-2">
+      <div className="p-3 space-y-3">
+        {/* Key Transformations */}
+        <div>
+          <div className="text-xs font-medium text-muted-foreground mb-1">変換ルール</div>
+          <div className="space-y-0.5">
             {transformations.map((t, i) => (
-              <label key={i} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-purple-50 dark:hover:bg-purple-950/30 p-1 rounded">
+              <div key={i} className="flex items-center gap-2 text-xs">
                 <input
                   type="checkbox"
                   checked={t.enabled}
                   readOnly
-                  className="w-4 h-4 rounded border-purple-300 text-purple-600 focus:ring-purple-500"
+                  className="w-3 h-3 rounded"
                 />
                 <span className={t.enabled ? '' : 'text-muted-foreground line-through'}>{t.rule}</span>
-              </label>
+              </div>
             ))}
           </div>
         </div>
 
         {/* Risk Assessment */}
         {(plan.risk_assessment || plan.target_count > 100) && (
-          <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
-            <div className="flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
-              <div>
-                <div className="text-sm font-semibold text-amber-700 dark:text-amber-400">Risk Assessment</div>
-                <p className="text-xs text-amber-600 dark:text-amber-300 mt-1">
-                  {plan.risk_assessment || `${Math.ceil(plan.target_count * 0.002)}件のファイルで通常より長い固有名詞を検知。実行後に個別確認を推奨。`}
-                </p>
-              </div>
-            </div>
+          <div className="flex items-start gap-2 text-xs bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1.5">
+            <AlertTriangle className="w-3 h-3 text-amber-500 mt-0.5 shrink-0" />
+            <span className="text-amber-700 dark:text-amber-400">
+              {plan.risk_assessment || `${Math.ceil(plan.target_count * 0.002)}件で長い固有名詞を検知`}
+            </span>
           </div>
         )}
 
-        {/* Workflow Steps with Descriptions */}
-        <div className="bg-white/70 dark:bg-slate-800/70 rounded-lg p-3 border border-purple-100 dark:border-purple-900">
-          <div className="flex items-center gap-2 mb-3">
-            <Play className="w-4 h-4 text-purple-500" />
-            <span className="text-sm font-semibold">Workflow</span>
-          </div>
-          <div className="space-y-3">
+        {/* Workflow Steps */}
+        <div>
+          <div className="text-xs font-medium text-muted-foreground mb-1">ワークフロー</div>
+          <div className="space-y-1">
             {workflowSteps.map((step) => (
               <div
                 key={step.id}
-                className={`rounded-lg transition-all ${
-                  step.status === 'running' ? 'bg-blue-50 dark:bg-blue-950/30 ring-2 ring-blue-300 dark:ring-blue-700' :
-                  step.status === 'completed' ? 'bg-green-50 dark:bg-green-950/30' :
-                  step.status === 'failed' ? 'bg-red-50 dark:bg-red-950/30' :
-                  'bg-slate-50 dark:bg-slate-900/30'
+                className={`flex items-center gap-2 px-2 py-1 rounded text-xs ${
+                  step.status === 'running' ? 'bg-blue-500/10' :
+                  step.status === 'completed' ? 'bg-green-500/10' :
+                  step.status === 'failed' ? 'bg-red-500/10' : ''
                 }`}
               >
-                <div className="flex items-center gap-3 p-2">
-                  <div className="flex items-center justify-center w-7 h-7 rounded-full bg-white dark:bg-slate-800 shadow-sm border">
-                    <StepIcon status={step.status} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className={`text-sm font-medium ${step.status === 'pending' ? 'text-muted-foreground' : ''}`}>
-                        {step.label}
-                      </span>
-                      {step.status === 'completed' && (
-                        <span className="text-xs bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 px-1.5 py-0.5 rounded">済</span>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {step.description || STEP_DESCRIPTIONS[step.id] || ""}
-                    </p>
-                  </div>
-                  {step.status === 'running' && progress && (
-                    <span className="text-xs font-mono bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded">
-                      {progress.completed}/{progress.total}
+                <StepIcon status={step.status} />
+                <div className="flex-1 min-w-0">
+                  <span className={step.status === 'pending' ? 'text-muted-foreground' : ''}>
+                    {step.label}
+                  </span>
+                  {STEP_DESCRIPTIONS[step.id] && (
+                    <span className="text-muted-foreground ml-1">
+                      - {STEP_DESCRIPTIONS[step.id]}
                     </span>
                   )}
                 </div>
+                {step.status === 'running' && progress && (
+                  <span className="text-muted-foreground shrink-0">
+                    {progress.completed}/{progress.total}
+                  </span>
+                )}
               </div>
             ))}
           </div>
         </div>
 
-        {/* Enhanced Progress Bar */}
+        {/* Progress Bar */}
         {isExecuting && progress && (
-          <div className="space-y-2 bg-slate-100 dark:bg-slate-900 rounded-lg p-3">
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-muted-foreground">進捗状況</span>
-              <span className="font-semibold text-purple-600 dark:text-purple-400">{progressPercent}%</span>
-            </div>
-            <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+          <div className="space-y-1">
+            <div className="h-1.5 bg-muted rounded-full overflow-hidden">
               <div
-                className="h-full bg-gradient-to-r from-purple-500 via-pink-500 to-purple-500 transition-all duration-300 animate-pulse"
+                className="h-full bg-blue-500 transition-all"
                 style={{ width: `${progressPercent}%` }}
               />
             </div>
             {progress.currentFile && (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Loader2 className="w-3 h-3 animate-spin" />
-                <span className="truncate font-mono">処理中: {progress.currentFile}</span>
+              <div className="text-xs text-muted-foreground truncate">
+                処理中: {progress.currentFile}
               </div>
             )}
           </div>
@@ -216,19 +161,16 @@ export function BulkPlanCard({ plan, workflowSteps, onCommit, isExecuting, progr
         <Button
           onClick={onCommit}
           disabled={isExecuting}
-          size="lg"
-          className="w-full bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white shadow-lg font-semibold text-base h-12"
+          size="sm"
+          className="w-full"
         >
           {isExecuting ? (
             <>
-              <Loader2 className="w-5 h-5 animate-spin" />
-              処理中...
+              <Loader2 className="w-3 h-3 animate-spin mr-1" />
+              実行中...
             </>
           ) : (
-            <>
-              <Check className="w-5 h-5" />
-              Commit All Changes ({plan.target_count.toLocaleString()} files)
-            </>
+            '実行'
           )}
         </Button>
       </div>
