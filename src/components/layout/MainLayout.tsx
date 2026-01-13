@@ -4,14 +4,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { useState } from "react";
 import { ConfigSidebar } from "./ConfigSidebar";
 import { EditorPanel } from "./EditorPanel";
+import { FileExplorer, OpenedFile } from "./FileExplorer";
 import { MenuBar } from "./MenuBar";
-import { SampleSidebar, SampleDraft } from "./SampleSidebar";
 import { StatusBar } from "./StatusBar";
-
-interface ActiveFile {
-  path: string;
-  filename: string;
-}
 
 interface OpenFileResult {
   path: string;
@@ -29,50 +24,77 @@ export function MainLayout() {
   const [anonymizedContent, setAnonymizedContent] = useState<string>("");
   const [currentPlan, setCurrentPlan] = useState<AnonPlan>(createDefaultPlan());
   const [isProcessing, setIsProcessing] = useState(false);
-  const [activeFile, setActiveFile] = useState<ActiveFile | null>(null);
+  const [openedFiles, setOpenedFiles] = useState<OpenedFile[]>([]);
+  const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
 
-  const handleSampleSelect = (draft: SampleDraft) => {
-      setOriginalContent(draft.content);
-      setAnonymizedContent(draft.content);
-      setCurrentPlan(createDefaultPlan());
-      setActiveFile(null); // Clear active file when selecting sample
-  };
-
-  const handleNewDraft = () => {
-      setOriginalContent("");
-      setAnonymizedContent("");
-      setCurrentPlan(createDefaultPlan());
-      setActiveFile(null);
-  };
+  const activeFile = openedFiles.find(f => f.path === activeFilePath) || null;
 
   // Open file from dialog
   const handleOpenFile = async () => {
     try {
       const result = await invoke<OpenFileResult | null>("open_file");
       if (result) {
+        // Check if already open
+        const existing = openedFiles.find(f => f.path === result.path);
+        if (existing) {
+          setActiveFilePath(result.path);
+          return;
+        }
+
+        const newFile: OpenedFile = {
+          path: result.path,
+          filename: result.filename,
+          hasChanges: false,
+        };
+        setOpenedFiles(prev => [...prev, newFile]);
+        setActiveFilePath(result.path);
         setOriginalContent(result.content);
         setAnonymizedContent(result.content);
         setCurrentPlan(createDefaultPlan());
-        setActiveFile({ path: result.path, filename: result.filename });
       }
     } catch (e) {
       console.error("Failed to open file:", e);
     }
   };
 
+  // Select an already opened file
+  const handleSelectFile = (file: OpenedFile) => {
+    setActiveFilePath(file.path);
+    // Note: In a full implementation, we'd store content per file
+    // For now, just switch the active file
+  };
+
+  // Close a file
+  const handleCloseFile = (file: OpenedFile) => {
+    setOpenedFiles(prev => prev.filter(f => f.path !== file.path));
+    if (activeFilePath === file.path) {
+      const remaining = openedFiles.filter(f => f.path !== file.path);
+      setActiveFilePath(remaining.length > 0 ? remaining[0].path : null);
+      if (remaining.length === 0) {
+        setOriginalContent("");
+        setAnonymizedContent("");
+        setCurrentPlan(createDefaultPlan());
+      }
+    }
+  };
+
   // Save anonymized file with dialog
   const handleSaveFile = async () => {
-    if (!anonymizedContent) return;
+    if (!anonymizedContent || !activeFile) return;
     try {
       const result = await invoke<SaveFileResult | null>("save_anonymized_file", {
         content: anonymizedContent,
-        originalFilename: activeFile?.filename || "untitled.txt",
+        originalFilename: activeFile.filename,
         originalContent: originalContent,
         appliedPlan: currentPlan,
       });
       if (result) {
         console.log("File saved:", result.saved_path);
         console.log("Audit log:", result.audit_log_path);
+        // Mark as no changes
+        setOpenedFiles(prev =>
+          prev.map(f => f.path === activeFilePath ? { ...f, hasChanges: false } : f)
+        );
       }
     } catch (e) {
       console.error("Failed to save file:", e);
@@ -88,6 +110,12 @@ export function MainLayout() {
         setCurrentPlan(plan);
         const result = await invoke<string>("apply_plan", { text: originalContent, plan });
         setAnonymizedContent(result);
+        // Mark file as having changes
+        if (activeFilePath) {
+          setOpenedFiles(prev =>
+            prev.map(f => f.path === activeFilePath ? { ...f, hasChanges: true } : f)
+          );
+        }
     } catch (e) {
         console.error("Anonymization failed:", e);
         setAnonymizedContent(`Error: ${e}`);
@@ -118,6 +146,10 @@ export function MainLayout() {
             if (result) {
               console.log("File saved:", result.saved_path);
               console.log("Audit log:", result.audit_log_path);
+              // Mark as no changes
+              setOpenedFiles(prev =>
+                prev.map(f => f.path === activeFilePath ? { ...f, hasChanges: false } : f)
+              );
             }
           }
 
@@ -129,7 +161,6 @@ export function MainLayout() {
           console.error("Save failed:", e);
       }
   };
-
 
   const hasUnsavedChanges = originalContent !== anonymizedContent;
 
@@ -145,17 +176,18 @@ export function MainLayout() {
 
       {/* Main Content Area */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Activity Bar */}
-        <div className="w-12 border-r bg-muted/30 flex flex-col items-center py-4 gap-4">
-             <div className="h-6 w-6 rounded bg-primary" />
-             <div className="h-6 w-6 rounded bg-muted-foreground/30" />
-        </div>
-
         {/* Main Flex Layout */}
         <div className="flex-1 flex min-w-0 overflow-hidden">
+
           {/* File Explorer */}
           <div className="w-64 shrink-0 h-full bg-background border-r overflow-hidden">
-            <SampleSidebar onSelect={handleSampleSelect} onNewDraft={handleNewDraft} />
+            <FileExplorer
+              openedFiles={openedFiles}
+              activeFilePath={activeFilePath || undefined}
+              onSelectFile={handleSelectFile}
+              onCloseFile={handleCloseFile}
+              onOpenFile={handleOpenFile}
+            />
           </div>
 
           {/* Editor Area */}
@@ -164,7 +196,14 @@ export function MainLayout() {
                 original={originalContent}
                 modified={anonymizedContent}
                 onAccept={handleAccept}
-                onModifiedChange={setAnonymizedContent}
+                onModifiedChange={(value) => {
+                  setAnonymizedContent(value);
+                  if (activeFilePath) {
+                    setOpenedFiles(prev =>
+                      prev.map(f => f.path === activeFilePath ? { ...f, hasChanges: true } : f)
+                    );
+                  }
+                }}
                 activeFileName={activeFile?.filename}
             />
           </div>
@@ -176,7 +215,7 @@ export function MainLayout() {
                 isProcessing={isProcessing}
                 currentContent={originalContent}
                 currentPlan={currentPlan}
-                fileCount={1}
+                fileCount={openedFiles.length}
                 currentFileName={activeFile?.filename}
              />
           </div>
