@@ -124,3 +124,116 @@ pub async fn save_anonymized_file(
         audit_log_path: audit_log_path.to_string_lossy().to_string(),
     }))
 }
+
+/// File entry for folder listing
+#[derive(Serialize)]
+pub struct FolderFileEntry {
+    pub path: String,
+    pub filename: String,
+    pub is_dir: bool,
+}
+
+/// Response from open_folder command
+#[derive(Serialize)]
+pub struct OpenFolderResult {
+    pub folder_path: String,
+    pub folder_name: String,
+    pub files: Vec<FolderFileEntry>,
+}
+
+/// Open folder dialog and list files
+#[tauri::command]
+pub async fn open_folder(app: tauri::AppHandle) -> Result<Option<OpenFolderResult>, String> {
+    let folder_path = app.dialog()
+        .file()
+        .blocking_pick_folder();
+
+    let Some(path) = folder_path else {
+        return Ok(None); // User cancelled
+    };
+
+    let path_buf = path.into_path().map_err(|e| format!("Invalid path: {:?}", e))?;
+
+    let folder_name = path_buf
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("folder")
+        .to_string();
+
+    let mut files = Vec::new();
+    collect_files_recursive(&path_buf, &mut files, 0, 3)?; // Max depth 3
+
+    Ok(Some(OpenFolderResult {
+        folder_path: path_buf.to_string_lossy().to_string(),
+        folder_name,
+        files,
+    }))
+}
+
+/// Recursively collect files from directory
+fn collect_files_recursive(
+    dir: &Path,
+    files: &mut Vec<FolderFileEntry>,
+    depth: usize,
+    max_depth: usize,
+) -> Result<(), String> {
+    if depth > max_depth {
+        return Ok(());
+    }
+
+    let entries = fs::read_dir(dir)
+        .map_err(|e| format!("Failed to read directory: {}", e))?;
+
+    let text_extensions = ["txt", "csv", "json", "md", "log", "xml", "html", "yml", "yaml"];
+
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+        let path = entry.path();
+        let filename = path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+
+        // Skip hidden files
+        if filename.starts_with('.') {
+            continue;
+        }
+
+        if path.is_dir() {
+            files.push(FolderFileEntry {
+                path: path.to_string_lossy().to_string(),
+                filename,
+                is_dir: true,
+            });
+            collect_files_recursive(&path, files, depth + 1, max_depth)?;
+        } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            if text_extensions.contains(&ext.to_lowercase().as_str()) {
+                files.push(FolderFileEntry {
+                    path: path.to_string_lossy().to_string(),
+                    filename,
+                    is_dir: false,
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Read a single file's content (for lazy loading)
+#[tauri::command]
+pub async fn read_file_content(file_path: String) -> Result<OpenFileResult, String> {
+    let path = Path::new(&file_path);
+    let content = read_file_with_encoding(path)?;
+    let filename = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    Ok(OpenFileResult {
+        path: file_path,
+        content,
+        filename,
+    })
+}

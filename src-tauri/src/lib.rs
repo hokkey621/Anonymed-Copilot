@@ -20,8 +20,11 @@ pub fn run() {
             commands::batch::bulk_execute,
             commands::batch::bulk_dry_run,
             commands::file::open_file,
+            commands::file::open_folder,
+            commands::file::read_file_content,
             commands::file::save_anonymized_file
         ])
+
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
