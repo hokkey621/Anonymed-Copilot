@@ -137,7 +137,8 @@ export function ConfigSidebar({
     try {
       const response = await invoke<AgentChatResponse>("agent_chat", {
         messages: apiMessages,
-        fileCount: fileCount
+        fileCount: fileCount,
+        editorContent: currentContent || null
       });
 
       const newMessage: Message = {
