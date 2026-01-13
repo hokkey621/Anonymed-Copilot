@@ -87,11 +87,13 @@ export function MainLayout() {
           </div>
 
           {/* Chat Sidebar */}
-          <div className="w-80 shrink-0 h-full bg-background border-l overflow-hidden">
+          <div className="w-96 shrink-0 h-full bg-background border-l overflow-hidden">
              <ConfigSidebar
                 onRunAnonymization={handleAnonymize}
                 isProcessing={isProcessing}
                 currentContent={originalContent}
+                currentPlan={currentPlan}
+                fileCount={1}
              />
           </div>
         </div>

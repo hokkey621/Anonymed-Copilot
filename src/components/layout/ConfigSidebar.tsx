@@ -4,59 +4,103 @@ import { Button } from "@/components/ui/button";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ChatMessage } from "@/components/chat/ChatMessage";
-import { ProgressIndicator, AgentProgressEvent } from "./ProgressIndicator";
-import { Send, ChevronDown } from "lucide-react";
+import { BulkPlanCard } from "@/components/chat/BulkPlanCard";
+import { AgentProgressEvent } from "./ProgressIndicator";
+import { Send, ChevronDown, FileText, Loader2 } from "lucide-react";
 
 interface Message {
   role: "user" | "assistant";
   content: string;
+  bulkPlan?: BulkExecutionPlan;
+  workflowSteps?: WorkflowStep[];
+}
+
+interface BulkExecutionPlan {
+  target_count: number;
+  estimated_time_ms: number;
+  policy_summary: string[];
+}
+
+interface WorkflowStep {
+  id: string;
+  label: string;
+  status: "pending" | "running" | "completed" | "failed";
+}
+
+interface BulkProgressEvent {
+  completed: number;
+  total: number;
+  current_file: string;
+  step_id: string;
+  step_status: string;
+  step_message: string;
+}
+
+interface AgentChatResponse {
+  message: string;
+  bulk_plan: BulkExecutionPlan | null;
+  workflow_steps: WorkflowStep[] | null;
 }
 
 interface ConfigSidebarProps {
   onRunAnonymization: (task: string) => void;
   isProcessing: boolean;
   currentContent: string;
+  fileCount?: number;
+  currentDirPath?: string;
+  currentPlan?: any;
+  currentFileName?: string;
 }
 
-const TASK_OPTIONS = [
-  { value: "Medical Case Study", label: "医療ケーススタディ" },
-  { value: "Vaccine Development", label: "ワクチン開発" },
-  { value: "Educational Material", label: "教育資料" },
-  { value: "General", label: "一般" },
+const MODEL_OPTIONS = [
+  { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+  { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+  { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash" },
 ];
 
-export function ConfigSidebar({ onRunAnonymization, isProcessing, currentContent }: ConfigSidebarProps) {
+export function ConfigSidebar({
+  onRunAnonymization,
+  isProcessing,
+  currentContent,
+  fileCount = 0,
+  currentDirPath = "",
+  currentPlan,
+  currentFileName = ""
+}: ConfigSidebarProps) {
   const [messages, setMessages] = useState<Message[]>([
-    { role: "assistant", content: "こんにちは！匿名化エージェントです。\n\nどのような匿名化が必要か教えてください。例えば：\n- 「ワクチン開発用に匿名化したい」\n- 「教育資料として使いたいので、病名は残してほしい」\n\n準備ができたら **実行** ボタンを押してください。" }
+    { role: "assistant", content: "どのような匿名化が必要ですか？\n\n例:\n- 「ワクチン開発用に匿名化して」\n- 「教育資料として使いたい」\n- 「全件に適用して」" }
   ]);
   const [inputInfo, setInputInfo] = useState("");
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [taskContext, setTaskContext] = useState("Medical Case Study");
-  const [showTaskDropdown, setShowTaskDropdown] = useState(false);
-  const [progressEvent, setProgressEvent] = useState<AgentProgressEvent | null>(null);
+  const [selectedModel, setSelectedModel] = useState("gemini-2.5-flash");
+  const [showModelDropdown, setShowModelDropdown] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{ completed: number; total: number; currentFile?: string } | null>(null);
+  const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([]);
+  const [isBulkExecuting, setIsBulkExecuting] = useState(false);
+  const [activeBulkPlan, setActiveBulkPlan] = useState<BulkExecutionPlan | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Listen for agent progress
   useEffect(() => {
-    const unlisten = listen<AgentProgressEvent>("agent-progress", (event) => {
-        setProgressEvent(event.payload);
-    });
-
-    return () => {
-        unlisten.then(f => f());
-    };
+    const unlisten = listen<AgentProgressEvent>("agent-progress", () => {});
+    return () => { unlisten.then(f => f()); };
   }, []);
 
-  // Reset progress when processing starts/stops
+  // Listen for bulk progress
   useEffect(() => {
-    if (!isProcessing) {
-        // Keep the last success state for a bit? Or just reset if it was successful?
-        // Let's keep it visible until user interacts or new run starts.
-        // Actually, let's reset it when new run starts.
-    } else {
-        setProgressEvent({ step: 'Planner', status: 'In Progress', message: 'Starting agent...' });
-    }
-  }, [isProcessing]);
+    const unlisten = listen<BulkProgressEvent>("bulk-progress", (event) => {
+      const { completed, total, current_file, step_id, step_status } = event.payload;
+      setBulkProgress({ completed, total, currentFile: current_file });
+      setWorkflowSteps(prev => prev.map(step =>
+        step.id === step_id ? { ...step, status: step_status as WorkflowStep['status'] } : step
+      ));
+      if (step_id === "audit" && step_status === "completed") {
+        setIsBulkExecuting(false);
+      }
+    });
+    return () => { unlisten.then(f => f()); };
+  }, []);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -73,164 +117,145 @@ export function ConfigSidebar({ onRunAnonymization, isProcessing, currentContent
     setInputInfo("");
     setIsChatLoading(true);
 
-    // Construct history for the backend
-    // If it's the very first user interaction involving the document, inject the FULL content.
-    // For subsequent turns, just send the messages as is (the backend is stateless between calls, so we send full history every time).
-    // WAIT: The backend is "stateless" meaning we must send the WHOLE history every time.
-
-    // 1. Prepare the new message list including the latest user message
     const newHistory = [...messages, userMsg];
-
-    // 2. Map to the format backend expects.
-    // Optimization: If the conversation is long, we might need to prune, but Gemini has a huuuuge context.
-    // We inject the document into the SYSTEM context or the First User Message if it's not there.
-
     let apiMessages = newHistory.map(m => ({ role: m.role, content: m.content }));
 
-    // If there is document content, ensuring it is part of the context.
-    // We treat the first message's context injection carefully.
     if (currentContent && currentContent.trim().length > 0) {
-        // If the first message doesn't have the context, prepending a system-like user message or modifying the first message.
-        // For simplicity: We prepend a context message if it's not already established.
-        // Actually, let's just prepend a context frame if it's the start.
-        if (messages.length === 1) { // Only the initial greeting exists
-             apiMessages = [
-                 messages[0], // Greeting
-                 { role: "user", content: `Context Document:\n${currentContent}\n\nUser Question: ${inputInfo}` }
-             ];
-             // Update local state to show just the question, but we send context to API?
-             // Better: Just send the context in the API call but keep UI clean.
-        } else {
-             // For later turns, we just assume the history carries the context if we sent it before?
-             // No, the backend `chat` is stateless. We must send the history where one of the messages *contained* the context.
-             // So if we modified the message sent to API in turn 1, we must keep sending that modified version.
-             // This implies `messages` state should nominally hold the full context?
-             // Or we keep a separate "apiHistory" state?
-             // Let's refine: We will inject context into the LAST message if it's the first time user speaks.
-
-             // actually, simplest valid approach for now:
-             // On every request, if we are in "analysis mode", we prepend the system context.
-             // But purely for chat, let's just prepend the document to the *first* legitimate user message in the history.
-
-             const firstUserIndex = apiMessages.findIndex(m => m.role === "user");
-             if (firstUserIndex !== -1) {
-                 apiMessages[firstUserIndex].content = `[Document Context]:\n${currentContent}\n\n[User]: ${apiMessages[firstUserIndex].content}`;
-             }
+      if (messages.length === 1) {
+        apiMessages = [
+          messages[0],
+          { role: "user", content: `Context Document:\n${currentContent}\n\nUser Question: ${inputInfo}` }
+        ];
+      } else {
+        const firstUserIndex = apiMessages.findIndex(m => m.role === "user");
+        if (firstUserIndex !== -1) {
+          apiMessages[firstUserIndex].content = `[Document Context]:\n${currentContent}\n\n[User]: ${apiMessages[firstUserIndex].content}`;
         }
+      }
     }
 
     try {
-      // Sending the array of messages
-      const response = await invoke<string>("chat_with_ai", { messages: apiMessages });
-      setMessages(prev => [...prev, { role: "assistant", content: response }]);
+      const response = await invoke<AgentChatResponse>("agent_chat", {
+        messages: apiMessages,
+        fileCount: fileCount
+      });
 
+      const newMessage: Message = {
+        role: "assistant",
+        content: response.message,
+        bulkPlan: response.bulk_plan || undefined,
+        workflowSteps: response.workflow_steps || undefined
+      };
+
+      setMessages(prev => [...prev, newMessage]);
+
+      if (response.bulk_plan && response.workflow_steps) {
+        setActiveBulkPlan(response.bulk_plan);
+        setWorkflowSteps(response.workflow_steps);
+      }
 
       // Auto-detect task context
       const lowerInput = inputInfo.toLowerCase();
       if (lowerInput.includes("ワクチン") || lowerInput.includes("vaccine")) {
         setTaskContext("Vaccine Development");
-      } else if (lowerInput.includes("教育") || lowerInput.includes("教材") || lowerInput.includes("educational")) {
+      } else if (lowerInput.includes("教育") || lowerInput.includes("教材")) {
         setTaskContext("Educational Material");
       }
-
     } catch (e) {
       console.error("Chat error:", e);
-      setMessages(prev => [...prev, { role: "assistant", content: `エラーが発生しました: ${e}` }]);
+      setMessages(prev => [...prev, { role: "assistant", content: `エラー: ${e}` }]);
     } finally {
       setIsChatLoading(false);
     }
   };
 
-  const handleExecuteFromChat = () => {
-    onRunAnonymization(taskContext);
+  const handleBulkCommit = async () => {
+    if (!currentDirPath) {
+      onRunAnonymization(taskContext);
+      return;
+    }
+    if (!currentPlan) {
+      console.error("No plan available");
+      return;
+    }
+
+    setIsBulkExecuting(true);
+    setBulkProgress({ completed: 0, total: activeBulkPlan?.target_count || 0 });
+
+    try {
+      await invoke("bulk_execute", {
+        dirPath: currentDirPath,
+        plan: currentPlan,
+        taskName: taskContext.replace(/\s+/g, '_')
+      });
+      setMessages(prev => [...prev, {
+        role: "assistant",
+        content: "✅ 完了しました。`anonymized_outputs` フォルダに保存されました。"
+      }]);
+    } catch (e) {
+      setMessages(prev => [...prev, { role: "assistant", content: `❌ エラー: ${e}` }]);
+    } finally {
+      setIsBulkExecuting(false);
+      setActiveBulkPlan(null);
+    }
   };
 
-  const currentTaskLabel = TASK_OPTIONS.find(t => t.value === taskContext)?.label || taskContext;
+  const modelLabel = MODEL_OPTIONS.find(m => m.value === selectedModel)?.label || selectedModel;
 
   return (
     <div className="h-full flex flex-col bg-background">
-      {/* Header */}
-      <div className="p-3 border-b flex items-center justify-between bg-gradient-to-r from-purple-500/10 to-pink-500/10">
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-          <span className="text-sm font-semibold">匿名化エージェント</span>
-        </div>
-
-        {/* Task Context Selector */}
-        <div className="relative">
-          <button
-            onClick={() => setShowTaskDropdown(!showTaskDropdown)}
-            className="text-xs px-2 py-1 rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center gap-1 transition-colors"
-          >
-            {currentTaskLabel}
-            <ChevronDown size={12} />
-          </button>
-          {showTaskDropdown && (
-            <div className="absolute right-0 top-full mt-1 bg-white dark:bg-slate-800 border rounded-lg shadow-lg z-50 py-1 min-w-[160px] max-w-[200px]">
-              {TASK_OPTIONS.map(opt => (
-                <button
-                  key={opt.value}
-                  onClick={() => { setTaskContext(opt.value); setShowTaskDropdown(false); }}
-                  className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 dark:hover:bg-slate-700
-                    ${taskContext === opt.value ? 'text-blue-500 font-medium' : ''}`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Progress Indicator */}
-      {(isProcessing || progressEvent) && (
-        <div className="px-3 pt-2">
-            <ProgressIndicator
-                currentStep={progressEvent?.step || 'Planner'}
-                status={progressEvent?.status || 'In Progress'}
-                message={progressEvent?.message || 'Ready to start...'}
-            />
-        </div>
-      )}
-
       {/* Chat Messages */}
       <ScrollArea className="flex-1" ref={scrollRef}>
-        <div className="p-4 space-y-4">
+        <div className="p-3 space-y-3">
           {messages.map((m, i) => (
-            <ChatMessage
-              key={i}
-              role={m.role}
-              content={m.content}
-              onExecute={m.role === 'assistant' && i === messages.length - 1 && currentContent ? handleExecuteFromChat : undefined}
-              isExecuting={isProcessing}
-            />
+            <div key={i}>
+              <ChatMessage role={m.role} content={m.content} />
+              {m.bulkPlan && m.workflowSteps && (
+                <div className="mt-2">
+                  <BulkPlanCard
+                    plan={m.bulkPlan}
+                    workflowSteps={workflowSteps.length > 0 ? workflowSteps : m.workflowSteps}
+                    onCommit={handleBulkCommit}
+                    isExecuting={isBulkExecuting}
+                    progress={bulkProgress || undefined}
+                  />
+                </div>
+              )}
+            </div>
           ))}
           {isChatLoading && (
-            <div className="flex gap-3">
-              <div className="w-7 h-7 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center">
-                <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              </div>
-              <div className="text-sm text-muted-foreground italic">考え中...</div>
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              考え中...
             </div>
           )}
         </div>
       </ScrollArea>
 
-      {/* Input Area */}
-      <div className="p-3 border-t bg-muted/5">
+      {/* Footer: File indicator + Input */}
+      <div className="border-t p-3 space-y-2">
+        {/* Target file indicator */}
+        {(currentFileName || currentContent) && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 px-2 py-1.5 rounded">
+            <FileText size={12} />
+            <span className="truncate">{currentFileName || "選択中のテキスト"}</span>
+          </div>
+        )}
+
+        {/* Input row */}
         <div className="flex gap-2">
           <input
             type="text"
-            className="flex-1 px-3 py-2 text-sm rounded-full border bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+            className="flex-1 px-3 py-2 text-sm rounded-md border bg-background focus:outline-none focus:ring-1 focus:ring-blue-500"
             value={inputInfo}
             onChange={(e) => setInputInfo(e.target.value)}
-            placeholder={currentContent ? "質問や要望を入力..." : "まずテキストを選択してください"}
-            onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
-            disabled={!currentContent}
+            placeholder={currentContent ? "質問を入力..." : "テキストを選択してください"}
+            onKeyDown={(e) => e.key === 'Enter' && e.metaKey && handleSendMessage()}
+            disabled={!currentContent || isProcessing}
           />
           <Button
             size="icon"
-            className="rounded-full shrink-0"
+            variant="default"
             onClick={handleSendMessage}
             disabled={!currentContent || !inputInfo.trim() || isChatLoading}
           >
@@ -238,14 +263,37 @@ export function ConfigSidebar({ onRunAnonymization, isProcessing, currentContent
           </Button>
         </div>
 
-        {/* Execute Button */}
-        <Button
-          onClick={() => onRunAnonymization(taskContext)}
-          disabled={isProcessing || !currentContent}
-          className="w-full mt-2 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600"
-        >
-          {isProcessing ? "処理中..." : "実行"}
-        </Button>
+        {/* Model selector row */}
+        <div className="flex items-center justify-between text-xs">
+          <div className="relative">
+            <button
+              onClick={() => setShowModelDropdown(!showModelDropdown)}
+              className="flex items-center gap-1 px-2 py-1 rounded hover:bg-muted transition-colors text-muted-foreground"
+            >
+              {modelLabel}
+              <ChevronDown size={12} />
+            </button>
+            {showModelDropdown && (
+              <div className="absolute bottom-full left-0 mb-1 bg-popover border rounded-md shadow-lg py-1 min-w-[160px] z-50">
+                {MODEL_OPTIONS.map(opt => (
+                  <button
+                    key={opt.value}
+                    onClick={() => { setSelectedModel(opt.value); setShowModelDropdown(false); }}
+                    className={`w-full text-left px-3 py-1.5 hover:bg-muted ${selectedModel === opt.value ? 'text-blue-500' : ''}`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {isProcessing && (
+            <span className="text-muted-foreground flex items-center gap-1">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              処理中...
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );
