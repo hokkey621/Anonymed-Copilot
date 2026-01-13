@@ -1,15 +1,16 @@
 import { useState, useRef, useEffect } from "react";
-import { FolderOpen, Save, FileText } from "lucide-react";
+import { FolderOpen, Folder, Save, FileText } from "lucide-react";
 
 
 interface MenuBarProps {
   onOpenFile: () => void;
+  onOpenFolder: () => void;
   onSaveFile: () => void;
   activeFileName?: string;
   hasUnsavedChanges?: boolean;
 }
 
-export function MenuBar({ onOpenFile, onSaveFile, activeFileName, hasUnsavedChanges }: MenuBarProps) {
+export function MenuBar({ onOpenFile, onOpenFolder, onSaveFile, activeFileName, hasUnsavedChanges }: MenuBarProps) {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -57,12 +58,22 @@ export function MenuBar({ onOpenFile, onSaveFile, activeFileName, hasUnsavedChan
             </button>
             <button
               className="w-full px-3 py-1.5 text-left hover:bg-accent flex items-center gap-2"
+              onClick={() => handleAction(onOpenFolder)}
+            >
+              <Folder size={14} />
+              <span>フォルダを開く</span>
+              <span className="ml-auto text-xs text-muted-foreground">⌘⇧O</span>
+            </button>
+            <div className="border-t my-1" />
+            <button
+              className="w-full px-3 py-1.5 text-left hover:bg-accent flex items-center gap-2"
               onClick={() => handleAction(onSaveFile)}
             >
               <Save size={14} />
               <span>名前を付けて保存</span>
               <span className="ml-auto text-xs text-muted-foreground">⌘⇧S</span>
             </button>
+
             <div className="border-t my-1" />
             <div className="px-3 py-1.5 text-xs text-muted-foreground">
               {activeFileName ? (

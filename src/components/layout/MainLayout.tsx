@@ -19,6 +19,18 @@ interface SaveFileResult {
   audit_log_path: string;
 }
 
+interface FolderFileEntry {
+  path: string;
+  filename: string;
+  is_dir: boolean;
+}
+
+interface OpenFolderResult {
+  folder_path: string;
+  folder_name: string;
+  files: FolderFileEntry[];
+}
+
 export function MainLayout() {
   const [originalContent, setOriginalContent] = useState<string>("");
   const [anonymizedContent, setAnonymizedContent] = useState<string>("");
@@ -26,6 +38,8 @@ export function MainLayout() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [openedFiles, setOpenedFiles] = useState<OpenedFile[]>([]);
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
+  const [currentFolder, setCurrentFolder] = useState<{ path: string; name: string } | null>(null);
+  const [folderFiles, setFolderFiles] = useState<FolderFileEntry[]>([]);
 
   const activeFile = openedFiles.find(f => f.path === activeFilePath) || null;
 
@@ -54,6 +68,51 @@ export function MainLayout() {
       }
     } catch (e) {
       console.error("Failed to open file:", e);
+    }
+  };
+
+  // Open folder from dialog
+  const handleOpenFolder = async () => {
+    try {
+      const result = await invoke<OpenFolderResult | null>("open_folder");
+      if (result) {
+        setCurrentFolder({ path: result.folder_path, name: result.folder_name });
+        setFolderFiles(result.files);
+        // Reset opened files when opening new folder
+        setOpenedFiles([]);
+        setActiveFilePath(null);
+        setOriginalContent("");
+        setAnonymizedContent("");
+      }
+    } catch (e) {
+      console.error("Failed to open folder:", e);
+    }
+  };
+
+  // Open a file from folder tree
+  const handleOpenFileFromTree = async (filePath: string, filename: string) => {
+    try {
+      const result = await invoke<OpenFileResult>("read_file_content", { filePath });
+      const existing = openedFiles.find(f => f.path === filePath);
+      if (existing) {
+        setActiveFilePath(filePath);
+        setOriginalContent(result.content);
+        setAnonymizedContent(result.content);
+        return;
+      }
+
+      const newFile: OpenedFile = {
+        path: filePath,
+        filename: filename,
+        hasChanges: false,
+      };
+      setOpenedFiles(prev => [...prev, newFile]);
+      setActiveFilePath(filePath);
+      setOriginalContent(result.content);
+      setAnonymizedContent(result.content);
+      setCurrentPlan(createDefaultPlan());
+    } catch (e) {
+      console.error("Failed to read file:", e);
     }
   };
 
@@ -169,6 +228,7 @@ export function MainLayout() {
       {/* Menu Bar */}
       <MenuBar
         onOpenFile={handleOpenFile}
+        onOpenFolder={handleOpenFolder}
         onSaveFile={handleSaveFile}
         activeFileName={activeFile?.filename}
         hasUnsavedChanges={hasUnsavedChanges}
@@ -187,7 +247,12 @@ export function MainLayout() {
               onSelectFile={handleSelectFile}
               onCloseFile={handleCloseFile}
               onOpenFile={handleOpenFile}
+              onOpenFolder={handleOpenFolder}
+              folderName={currentFolder?.name}
+              folderFiles={folderFiles}
+              onFileClick={handleOpenFileFromTree}
             />
+
           </div>
 
           {/* Editor Area */}
