@@ -31,12 +31,18 @@ interface OpenFolderResult {
   files: FolderFileEntry[];
 }
 
+interface OpenedFileState extends OpenedFile {
+  originalContent: string;
+  modifiedContent: string;
+  plan: AnonPlan;
+}
+
 export function MainLayout() {
   const [originalContent, setOriginalContent] = useState<string>("");
   const [anonymizedContent, setAnonymizedContent] = useState<string>("");
   const [currentPlan, setCurrentPlan] = useState<AnonPlan>(createDefaultPlan());
   const [isProcessing, setIsProcessing] = useState(false);
-  const [openedFiles, setOpenedFiles] = useState<OpenedFile[]>([]);
+  const [openedFiles, setOpenedFiles] = useState<OpenedFileState[]>([]);
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
   const [currentFolder, setCurrentFolder] = useState<{ path: string; name: string } | null>(null);
   const [folderFiles, setFolderFiles] = useState<FolderFileEntry[]>([]);
@@ -52,19 +58,26 @@ export function MainLayout() {
         const existing = openedFiles.find(f => f.path === result.path);
         if (existing) {
           setActiveFilePath(result.path);
+          setOriginalContent(existing.originalContent);
+          setAnonymizedContent(existing.modifiedContent);
+          setCurrentPlan(existing.plan);
           return;
         }
 
-        const newFile: OpenedFile = {
+        const newPlan = createDefaultPlan();
+        const newFile: OpenedFileState = {
           path: result.path,
           filename: result.filename,
           hasChanges: false,
+          originalContent: result.content,
+          modifiedContent: result.content,
+          plan: newPlan,
         };
         setOpenedFiles(prev => [...prev, newFile]);
         setActiveFilePath(result.path);
         setOriginalContent(result.content);
         setAnonymizedContent(result.content);
-        setCurrentPlan(createDefaultPlan());
+        setCurrentPlan(newPlan);
       }
     } catch (e) {
       console.error("Failed to open file:", e);
@@ -96,21 +109,26 @@ export function MainLayout() {
       const existing = openedFiles.find(f => f.path === filePath);
       if (existing) {
         setActiveFilePath(filePath);
-        setOriginalContent(result.content);
-        setAnonymizedContent(result.content);
+        setOriginalContent(existing.originalContent);
+        setAnonymizedContent(existing.modifiedContent);
+        setCurrentPlan(existing.plan);
         return;
       }
 
-      const newFile: OpenedFile = {
+      const newPlan = createDefaultPlan();
+      const newFile: OpenedFileState = {
         path: filePath,
         filename: filename,
         hasChanges: false,
+        originalContent: result.content,
+        modifiedContent: result.content,
+        plan: newPlan,
       };
       setOpenedFiles(prev => [...prev, newFile]);
       setActiveFilePath(filePath);
       setOriginalContent(result.content);
       setAnonymizedContent(result.content);
-      setCurrentPlan(createDefaultPlan());
+      setCurrentPlan(newPlan);
     } catch (e) {
       console.error("Failed to read file:", e);
     }
@@ -118,9 +136,12 @@ export function MainLayout() {
 
   // Select an already opened file
   const handleSelectFile = (file: OpenedFile) => {
-    setActiveFilePath(file.path);
-    // Note: In a full implementation, we'd store content per file
-    // For now, just switch the active file
+    const target = openedFiles.find(f => f.path === file.path);
+    if (!target) return;
+    setActiveFilePath(target.path);
+    setOriginalContent(target.originalContent);
+    setAnonymizedContent(target.modifiedContent);
+    setCurrentPlan(target.plan);
   };
 
   // Close a file
@@ -133,6 +154,10 @@ export function MainLayout() {
         setOriginalContent("");
         setAnonymizedContent("");
         setCurrentPlan(createDefaultPlan());
+      } else {
+        setOriginalContent(remaining[0].originalContent);
+        setAnonymizedContent(remaining[0].modifiedContent);
+        setCurrentPlan(remaining[0].plan);
       }
     }
   };
@@ -172,7 +197,7 @@ export function MainLayout() {
         // Mark file as having changes
         if (activeFilePath) {
           setOpenedFiles(prev =>
-            prev.map(f => f.path === activeFilePath ? { ...f, hasChanges: true } : f)
+            prev.map(f => f.path === activeFilePath ? { ...f, hasChanges: true, modifiedContent: result, plan } : f)
           );
         }
     } catch (e) {
@@ -212,9 +237,21 @@ export function MainLayout() {
             }
           }
 
+          const nextPlan = createDefaultPlan();
           setOriginalContent(anonymizedContent);
           setAnonymizedContent(anonymizedContent);
-          setCurrentPlan(createDefaultPlan());
+          setCurrentPlan(nextPlan);
+          if (activeFilePath) {
+            setOpenedFiles(prev =>
+              prev.map(f => f.path === activeFilePath ? {
+                ...f,
+                hasChanges: false,
+                originalContent: anonymizedContent,
+                modifiedContent: anonymizedContent,
+                plan: nextPlan,
+              } : f)
+            );
+          }
           console.log("Anonymization approved and saved.");
       } catch (e) {
           console.error("Save failed:", e);
@@ -265,7 +302,7 @@ export function MainLayout() {
                   setAnonymizedContent(value);
                   if (activeFilePath) {
                     setOpenedFiles(prev =>
-                      prev.map(f => f.path === activeFilePath ? { ...f, hasChanges: true } : f)
+                      prev.map(f => f.path === activeFilePath ? { ...f, hasChanges: true, modifiedContent: value } : f)
                     );
                   }
                 }}
@@ -280,8 +317,9 @@ export function MainLayout() {
                 isProcessing={isProcessing}
                 currentContent={originalContent}
                 currentPlan={currentPlan}
-                fileCount={openedFiles.length}
+                fileCount={folderFiles.filter(f => !f.is_dir).length}
                 currentFileName={activeFile?.filename}
+                currentDirPath={currentFolder?.path}
              />
           </div>
         </div>

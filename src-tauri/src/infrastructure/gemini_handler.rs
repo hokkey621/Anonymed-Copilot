@@ -138,8 +138,10 @@ impl GeminiHandler {
 
         if let Some(candidate) = resp_json.candidates.first() {
             if let Some(part) = candidate.content.parts.first() {
-                serde_json::from_str(&part.text).map_err(|e| {
-                    format!("Failed to parse JSON: {}. Text: {}", e, part.text)
+                // Sanitize the JSON text to remove invalid characters
+                let sanitized = Self::sanitize_json_text(&part.text);
+                serde_json::from_str(&sanitized).map_err(|e| {
+                    format!("Failed to parse JSON: {}. Text: {}", e, sanitized)
                 })
             } else {
                 Err("No content part in candidate".to_string())
@@ -147,6 +149,69 @@ impl GeminiHandler {
         } else {
             Err("No candidates returned".to_string())
         }
+    }
+
+    /// Sanitize JSON text by removing non-ASCII characters that shouldn't be in JSON structure
+    fn sanitize_json_text(text: &str) -> String {
+        // Remove markdown code block markers if present
+        let text = text.trim();
+        let text = if text.starts_with("```json") {
+            text.strip_prefix("```json").unwrap_or(text)
+        } else if text.starts_with("```") {
+            text.strip_prefix("```").unwrap_or(text)
+        } else {
+            text
+        };
+        let text = if text.ends_with("```") {
+            text.strip_suffix("```").unwrap_or(text)
+        } else {
+            text
+        };
+        let text = text.trim();
+
+        // Clean up invalid characters in JSON structure parts
+        let mut result = String::with_capacity(text.len());
+        let mut in_string = false;
+        let mut escape_next = false;
+
+        for ch in text.chars() {
+            if escape_next {
+                result.push(ch);
+                escape_next = false;
+                continue;
+            }
+
+            if ch == '\\' && in_string {
+                result.push(ch);
+                escape_next = true;
+                continue;
+            }
+
+            if ch == '"' {
+                in_string = !in_string;
+                result.push(ch);
+                continue;
+            }
+
+            if in_string {
+                // Inside a string, allow most characters (including Unicode)
+                result.push(ch);
+            } else {
+                // Outside of string, only allow valid JSON structural characters
+                if ch.is_ascii() || ch.is_whitespace() {
+                    // Filter out non-JSON structural characters outside strings
+                    if ch.is_ascii_alphanumeric()
+                        || ch.is_ascii_whitespace()
+                        || "{}[],:\".-+eE_".contains(ch) {
+                        result.push(ch);
+                    }
+                    // Skip other characters like random Unicode outside strings
+                }
+                // Skip non-ASCII characters outside of strings entirely
+            }
+        }
+
+        result
     }
 
     /// Multi-turn chat with history

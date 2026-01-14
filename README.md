@@ -11,7 +11,7 @@
 - **AI匿名化**: Gemini 2.5 Flash APIによる高精度な個人情報検出
 - **Diff表示**: 変更前後を並べて確認できるエディタ
 - **コンテキストチャット**: 文書についてAIに相談可能
-- **サンプルテンプレート**: 医療記録、臨床ノート、研究概要のサンプル付き
+- **一括処理**: フォルダ配下のファイルをまとめて匿名化
 - **セキュア**: 元テキストのメモリゼロ化による安全な処理
 
 ## スクリーンショット
@@ -34,7 +34,7 @@ npm install
 
 # 環境変数の設定
 cp src-tauri/.env.example src-tauri/.env
-# .env に GOOGLE_API_KEY を設定
+# .env に GOOGLE_API_KEY と ANONYMED_HMAC_KEY を設定
 ```
 
 ### 開発サーバー起動
@@ -51,10 +51,11 @@ npm run tauri build
 
 ## 使い方
 
-1. **サンプル選択**: 左サイドバーからサンプルテキストを選択、または「Open Blank Editor」で新規作成
+1. **ファイル/フォルダを開く**: 左サイドバーからファイルまたはフォルダを選択
 2. **AI相談**: 右サイドバーのチャットで「どこを匿名化すべき？」などと質問
 3. **匿名化実行**: 「Run Anonymization」ボタンをクリック
 4. **確認・適用**: Diffエディタで変更を確認し、「Apply Changes」で確定
+5. **一括処理**: チャットで「全件に適用して」と送信 → 実行で `anonymized_outputs` に出力
 
 ## 技術スタック
 
@@ -69,7 +70,6 @@ npm run tauri build
 ```
 src/                    # React Frontend
 ├── components/layout/  # UI Components (MainLayout, EditorPanel, etc.)
-├── data/              # Sample data
 └── lib/               # Utilities
 
 src-tauri/             # Rust Backend

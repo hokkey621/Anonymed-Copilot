@@ -3,6 +3,8 @@ use crate::infrastructure::pdf_writer;
 use hmac::{Hmac, Mac};
 use sha2::{Sha256, Digest};
 use hex;
+use dotenv::dotenv;
+use std::env;
 
 // Create alias for HMAC-SHA256
 type HmacSha256 = Hmac<Sha256>;
@@ -13,7 +15,13 @@ pub fn create_audit_report(final_content: String, applied_plan: AnonPlan) -> Res
     hasher.update(final_content.as_bytes());
     let hash = hex::encode(hasher.finalize());
 
-    let rules_list: Vec<String> = applied_plan.global_rules.keys().cloned().collect();
+    let rules_list: Vec<String> = if !applied_plan.replacements.is_empty() {
+        applied_plan.replacements.iter()
+            .map(|r| format!("{} -> {} ({})", r.original, r.replacement, r.reason))
+            .collect()
+    } else {
+        applied_plan.global_rules.keys().cloned().collect()
+    };
 
     let log = AuditLog {
         task_context: applied_plan.task_name,
@@ -32,8 +40,10 @@ pub fn create_audit_report(final_content: String, applied_plan: AnonPlan) -> Res
 pub fn generate_report(mut log: AuditLog) -> Result<String, String> {
     // Generate signature if missing
     if log.signature.is_none() {
-        let secret_key = b"super-secret-key-from-env"; // TODO: load from safe storage
-        let mut mac = HmacSha256::new_from_slice(secret_key)
+        dotenv().ok();
+        let secret_key = env::var("ANONYMED_HMAC_KEY")
+            .map_err(|_| "ANONYMED_HMAC_KEY not set".to_string())?;
+        let mut mac = HmacSha256::new_from_slice(secret_key.as_bytes())
             .map_err(|e| format!("HMAC invalid length: {}", e))?;
 
         let data_to_sign = format!("{}{}{}", log.task_context, log.data_hash, log.timestamp);

@@ -137,29 +137,13 @@ export function FileExplorer({
 
       <ScrollArea className="flex-1 w-full">
         <div className="py-2">
-          {!folderName && folderFiles.length === 0 ? (
-            <div className="space-y-1">
-              <div
-                className="flex items-center py-2 px-4 cursor-pointer hover:bg-slate-200/50 dark:hover:bg-slate-800 text-sm select-none transition-colors"
-                onClick={onOpenFile}
-              >
-                <FileText size={14} className="mr-2 text-muted-foreground" />
-                <span className="text-muted-foreground">ファイルを開く...</span>
+          {/* Opened Files Section */}
+          {openedFiles.length > 0 && (
+            <div className="mb-2">
+              <div className="px-4 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                開いているファイル
               </div>
-              <div
-                className="flex items-center py-2 px-4 cursor-pointer hover:bg-slate-200/50 dark:hover:bg-slate-800 text-sm select-none transition-colors"
-                onClick={onOpenFolder}
-              >
-                <FolderOpen size={14} className="mr-2 text-muted-foreground" />
-                <span className="text-muted-foreground">フォルダを開く...</span>
-              </div>
-            </div>
-          ) : (
-            <>
-              {roots.map(file => renderFileItem(file, 0))}
-
-              {/* Open files not in folder */}
-              {openedFiles.filter(of => !folderFiles.some(ff => ff.path === of.path)).map(file => (
+              {openedFiles.map(file => (
                 <div
                   key={file.path}
                   className={cn(
@@ -184,8 +168,35 @@ export function FileExplorer({
                   </button>
                 </div>
               ))}
-            </>
+            </div>
           )}
+
+          {/* Folder Tree Section */}
+          {!folderName && folderFiles.length === 0 && openedFiles.length === 0 ? (
+            <div className="space-y-1">
+              <div
+                className="flex items-center py-2 px-4 cursor-pointer hover:bg-slate-200/50 dark:hover:bg-slate-800 text-sm select-none transition-colors"
+                onClick={onOpenFile}
+              >
+                <FileText size={14} className="mr-2 text-muted-foreground" />
+                <span className="text-muted-foreground">ファイルを開く...</span>
+              </div>
+              <div
+                className="flex items-center py-2 px-4 cursor-pointer hover:bg-slate-200/50 dark:hover:bg-slate-800 text-sm select-none transition-colors"
+                onClick={onOpenFolder}
+              >
+                <FolderOpen size={14} className="mr-2 text-muted-foreground" />
+                <span className="text-muted-foreground">フォルダを開く...</span>
+              </div>
+            </div>
+          ) : folderName && folderFiles.length > 0 ? (
+            <>
+              <div className="px-4 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                {folderName}
+              </div>
+              {roots.map(file => renderFileItem(file, 0))}
+            </>
+          ) : null}
         </div>
       </ScrollArea>
     </div>
