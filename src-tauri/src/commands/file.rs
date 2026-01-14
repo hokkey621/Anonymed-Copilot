@@ -3,6 +3,9 @@ use std::fs;
 use std::path::Path;
 use tauri_plugin_dialog::DialogExt;
 use chrono::Local;
+use sha2::{Sha256, Digest};
+use hex;
+use crate::utils::file_reader::read_file_with_encoding;
 
 /// Response from open_file command
 #[derive(Serialize)]
@@ -12,27 +15,10 @@ pub struct OpenFileResult {
     pub filename: String,
 }
 
-/// Read file with automatic encoding detection (UTF-8 or Shift-JIS)
-fn read_file_with_encoding(path: &Path) -> Result<String, String> {
-    let bytes = fs::read(path).map_err(|e| format!("Failed to read file: {}", e))?;
-
-    // Try UTF-8 first
-    if let Ok(content) = String::from_utf8(bytes.clone()) {
-        return Ok(content);
-    }
-
-    // Fallback to Shift-JIS (Windows-31J)
-    let (decoded, _, had_errors) = encoding_rs::SHIFT_JIS.decode(&bytes);
-    if had_errors {
-        // Try EUC-JP as another fallback
-        let (decoded_euc, _, had_errors_euc) = encoding_rs::EUC_JP.decode(&bytes);
-        if !had_errors_euc {
-            return Ok(decoded_euc.into_owned());
-        }
-        return Err("Failed to decode file: unsupported encoding".to_string());
-    }
-
-    Ok(decoded.into_owned())
+fn sha256_hash(content: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(content.as_bytes());
+    hex::encode(hasher.finalize())
 }
 
 /// Open file dialog and read file content
@@ -111,8 +97,8 @@ pub async fn save_anonymized_file(
         "timestamp": timestamp,
         "original_filename": original_filename,
         "saved_filename": path_buf.file_name().and_then(|n| n.to_str()).unwrap_or("unknown"),
-        "original_hash": format!("{:x}", md5::compute(original_content.as_bytes())),
-        "anonymized_hash": format!("{:x}", md5::compute(content.as_bytes())),
+        "original_hash": sha256_hash(&original_content),
+        "anonymized_hash": sha256_hash(&content),
         "applied_plan": applied_plan,
     });
 
@@ -184,8 +170,6 @@ fn collect_files_recursive(
     let entries = fs::read_dir(dir)
         .map_err(|e| format!("Failed to read directory: {}", e))?;
 
-    let text_extensions = ["txt", "csv", "json", "md", "log", "xml", "html", "yml", "yaml"];
-
     for entry in entries {
         let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
         let path = entry.path();
@@ -206,14 +190,12 @@ fn collect_files_recursive(
                 is_dir: true,
             });
             collect_files_recursive(&path, files, depth + 1, max_depth)?;
-        } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            if text_extensions.contains(&ext.to_lowercase().as_str()) {
-                files.push(FolderFileEntry {
-                    path: path.to_string_lossy().to_string(),
-                    filename,
-                    is_dir: false,
-                });
-            }
+        } else {
+            files.push(FolderFileEntry {
+                path: path.to_string_lossy().to_string(),
+                filename,
+                is_dir: false,
+            });
         }
     }
 

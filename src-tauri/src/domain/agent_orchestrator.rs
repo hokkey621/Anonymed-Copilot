@@ -127,8 +127,8 @@ impl AgentOrchestrator {
             message: "Analyzing context and designing strategy...".to_string(),
         });
 
-        let preview = if text.len() > 1000 { &text[0..1000] } else { text };
-        let strategy = self.plan_strategy(user_task_input, preview).await;
+        let preview = text.chars().take(1000).collect::<String>();
+        let strategy = self.plan_strategy(user_task_input, &preview).await;
 
         let strategy = match strategy {
             Ok(s) => {

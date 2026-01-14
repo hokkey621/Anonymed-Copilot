@@ -4,6 +4,8 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use crate::domain::agent_orchestrator::AgentOrchestrator;
+use crate::utils::file_reader::read_file_with_encoding;
+use crate::utils::plan_apply::apply_plan_to_text;
 use serde::Serialize;
 use tauri::Emitter;
 use rayon::prelude::*;
@@ -44,42 +46,6 @@ pub struct DryRunResult {
     pub warnings: Vec<DryRunWarning>,
 }
 
-/// Apply replacement plan to text (no API calls - fast rule-based)
-fn apply_plan_to_text(text: &str, plan: &AnonPlan) -> Result<String, String> {
-    let mut replacements = plan.replacements.clone();
-    replacements.sort_by(|a, b| b.start.cmp(&a.start));
-
-    let mut processed = text.to_string();
-
-    for item in replacements {
-        let suggested_start = item.start;
-        let original_target = &item.original;
-
-        if processed.get(suggested_start..suggested_start + original_target.len()) == Some(original_target) {
-            processed.replace_range(suggested_start..suggested_start + original_target.len(), &item.replacement);
-        } else {
-            // Fallback: fuzzy search
-            let mut best_start = None;
-            let mut min_distance = usize::MAX;
-
-            for (found_idx, _) in processed.match_indices(original_target) {
-                let distance = (found_idx as isize - suggested_start as isize).unsigned_abs();
-                if distance < min_distance {
-                    min_distance = distance;
-                    best_start = Some(found_idx);
-                }
-            }
-
-            if let Some(actual_start) = best_start {
-                processed.replace_range(actual_start..actual_start + original_target.len(), &item.replacement);
-            }
-            // If not found, skip this replacement (some files may not have all patterns)
-        }
-    }
-
-    Ok(processed)
-}
-
 /// Calculate SHA-256 hash of content
 fn sha256_hash(content: &str) -> String {
     let mut hasher = Sha256::new();
@@ -113,7 +79,7 @@ pub async fn bulk_dry_run(
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
 
-        match fs::read_to_string(&file_path) {
+        match read_file_with_encoding(&file_path) {
             Ok(content) => {
                 // Check for long proper nouns (simple heuristic: words > 15 chars)
                 let long_words: Vec<&str> = content.split_whitespace()
@@ -174,7 +140,13 @@ pub async fn bulk_execute(
     let entries: Vec<_> = fs::read_dir(path)
         .map_err(|e| e.to_string())?
         .filter_map(|res| res.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "txt"))
+        .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .map(|name| !name.starts_with('.'))
+                .unwrap_or(false)
+        })
         .collect();
 
     let total = entries.len();
@@ -210,7 +182,7 @@ pub async fn bulk_execute(
             .unwrap_or_default();
 
         // Read original content
-        let content = match fs::read_to_string(&file_path) {
+        let content = match read_file_with_encoding(&file_path) {
             Ok(c) => c,
             Err(_) => {
                 error_count.fetch_add(1, Ordering::Relaxed);
@@ -222,7 +194,7 @@ pub async fn bulk_execute(
         let original_hash = sha256_hash(&content);
 
         // Apply plan (fast rule-based, no API)
-        let processed = match apply_plan_to_text(&content, &plan) {
+        let processed = match apply_plan_to_text(&content, &plan, false) {
             Ok(p) => p,
             Err(_) => {
                 error_count.fetch_add(1, Ordering::Relaxed);
@@ -325,7 +297,13 @@ pub async fn process_bulk(
     let entries: Vec<_> = fs::read_dir(path)
         .map_err(|e| e.to_string())?
         .filter_map(|res| res.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "txt")) // Only .txt for now
+        .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .map(|name| !name.starts_with('.'))
+                .unwrap_or(false)
+        })
         .collect();
 
     // 3. Process Loop (Async Sequential for Gemini/API limits)
@@ -336,7 +314,7 @@ pub async fn process_bulk(
         let file_path = entry.path();
 
         // Read file content directly
-        let content = match fs::read_to_string(&file_path) {
+        let content = match read_file_with_encoding(&file_path) {
              Ok(c) => c,
              Err(_) => {
                  error_count += 1;
@@ -360,7 +338,7 @@ pub async fn process_bulk(
                     applied_rules,
                     user_overrides: vec![],
                     privacy_score: 0.8, // Mock
-                    data_hash: format!("{:x}", md5::compute(content.as_bytes())), // Simple hash for ID
+                    data_hash: sha256_hash(&content),
                     timestamp: chrono::Utc::now().to_rfc3339(),
                     signature: None,
                 };
