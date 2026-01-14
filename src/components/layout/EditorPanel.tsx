@@ -17,6 +17,10 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
   };
 
   const handleEditorDidMount = (editor: any) => {
+      // Hide line numbers on the original (left) editor
+      const originalEditor = editor.getOriginalEditor();
+      originalEditor.updateOptions({ lineNumbers: 'off' });
+
       const modifiedEditor = editor.getModifiedEditor();
       modifiedEditor.onDidChangeModelContent(() => {
           if (onModifiedChange) {
@@ -80,8 +84,10 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
                 renderSideBySide: true,
                 minimap: { enabled: false },
                 scrollBeyondLastLine: false,
-                originalEditable: false, // Usually original shouldn't be edited
+                originalEditable: false,
             }}
+            originalModelPath="original"
+            modifiedModelPath="modified"
          />
       </div>
     </div>
