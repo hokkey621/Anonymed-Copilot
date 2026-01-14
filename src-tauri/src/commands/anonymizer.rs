@@ -102,10 +102,34 @@ fn detect_bulk_intent(messages: &[ChatMessage]) -> bool {
 pub async fn agent_chat(
     messages: Vec<ChatMessage>,
     file_count: usize,
+    editor_content: Option<String>,
 ) -> Result<AgentChatResponse, String> {
     let handler = GeminiHandler::new()?;
 
     let is_bulk_request = detect_bulk_intent(&messages);
+
+    // Build editor context if content is provided
+    let editor_context = editor_content
+        .filter(|c| !c.is_empty())
+        .map(|c| format!(
+            r#"
+
+【現在エディタに表示されているテキスト】
+```
+{}
+```
+
+上記のテキストを分析し、最適な匿名化プランをJSON形式で提案してください。
+JSONフォーマット:
+{{
+  "task_name": "タスク名",
+  "replacements": [
+    {{ "original": "元のテキスト", "replacement": "置換後", "start": 開始位置, "end": 終了位置, "reason": "理由", "category": "カテゴリ" }}
+  ]
+}}"#,
+            c
+        ))
+        .unwrap_or_default();
 
     // Enhanced system prompt for bulk execution
     let system_context = if is_bulk_request {
@@ -117,12 +141,16 @@ pub async fn agent_chat(
 2. 処理はまず全ファイルの検証（バリデーション）から開始し、その後並列処理を行う旨を伝える
 3. 元データは一切変更せず、別ディレクトリに出力することを強調
 
-例: 「承知しました。3省2ガイドラインの観点から、まず全{}件の読み込み可否を検証し、問題がなければ並列処理を開始します。元データは変更せず、anonymized_outputsフォルダに安全に出力します。」"#,
-            file_count, file_count
+例: 「承知しました。3省2ガイドラインの観点から、まず全{}件の読み込み可否を検証し、問題がなければ並列処理を開始します。元データは変更せず、anonymized_outputsフォルダに安全に出力します。」{}"#,
+            file_count, file_count, editor_context
         )
     } else {
-        "あなたは医療データ匿名化の専門エージェントです。ユーザーの匿名化要件を理解し、最適な処理方法を提案してください。3省2ガイドライン等の規制に準拠した安全な処理を心がけてください。".to_string()
+        format!(
+            "あなたは医療データ匿名化の専門エージェントです。ユーザーの匿名化要件を理解し、最適な処理方法を提案してください。3省2ガイドライン等の規制に準拠した安全な処理を心がけてください。{}",
+            editor_context
+        )
     };
+
 
     // Prepend system context to first user message
     let mut history: Vec<Content> = messages.iter().map(|m| Content {

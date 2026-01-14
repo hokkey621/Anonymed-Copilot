@@ -1,14 +1,15 @@
 import { DiffEditor } from "@monaco-editor/react";
-import { Check, Clipboard } from "lucide-react";
+import { Check, Clipboard, FileText } from "lucide-react";
 
 interface EditorPanelProps {
   original?: string;
   modified?: string;
   onAccept: () => void;
   onModifiedChange?: (value: string) => void;
+  activeFileName?: string;
 }
 
-export function EditorPanel({ original = "", modified = "", onAccept, onModifiedChange }: EditorPanelProps) {
+export function EditorPanel({ original = "", modified = "", onAccept, onModifiedChange, activeFileName }: EditorPanelProps) {
   const hasChanges = original !== modified;
 
   const handleCopy = () => {
@@ -28,9 +29,21 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
     <div className="h-full flex flex-col bg-background">
       {/* Editor Header */}
       <div className="h-9 border-b flex items-center justify-between px-4 bg-muted/20 shrink-0">
-          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              {hasChanges ? "Review Changes" : "Editor"}
-          </span>
+          <div className="flex items-center gap-2">
+            {activeFileName && (
+              <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                <FileText size={12} />
+                <span className="font-medium">{activeFileName}</span>
+                {hasChanges && <span className="text-orange-500 font-bold ml-1">●</span>}
+              </div>
+            )}
+            {!activeFileName && (
+              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                {hasChanges ? "Review Changes" : "Editor"}
+              </span>
+            )}
+          </div>
+
           <div className="flex items-center gap-2">
               {hasChanges && (
                   <>

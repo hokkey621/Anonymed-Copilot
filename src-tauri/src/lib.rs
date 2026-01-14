@@ -7,6 +7,7 @@ pub mod utils;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             commands::anonymizer::analyze_text,
             commands::anonymizer::apply_plan,
@@ -17,8 +18,13 @@ pub fn run() {
             commands::audit::generate_public_notice,
             commands::batch::process_bulk,
             commands::batch::bulk_execute,
-            commands::batch::bulk_dry_run
+            commands::batch::bulk_dry_run,
+            commands::file::open_file,
+            commands::file::open_folder,
+            commands::file::read_file_content,
+            commands::file::save_anonymized_file
         ])
+
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
