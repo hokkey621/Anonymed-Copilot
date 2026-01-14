@@ -255,12 +255,14 @@ export function ConfigSidebar({
             disabled={!currentContent || isProcessing}
           />
           <Button
-            size="icon"
+            size="sm"
             variant="default"
             onClick={handleSendMessage}
             disabled={!currentContent || !inputInfo.trim() || isChatLoading}
+            className="shrink-0 gap-1.5"
           >
-            <Send size={16} />
+            <Send size={14} />
+            実行
           </Button>
         </div>
 
