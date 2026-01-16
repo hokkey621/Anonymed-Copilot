@@ -1,6 +1,8 @@
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { FileText, FolderOpen } from "lucide-react";
 import { useState } from "react";
 import { FileTreeNode } from "@/components/file-tree/FileTreeNode";
+import { cn } from "@/lib/utils";
 
 export interface OpenedFile {
   path: string;
@@ -32,6 +34,7 @@ export function FileExplorer({
   onFileClick,
 }: FileExplorerProps) {
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
+  const [rootExpanded, setRootExpanded] = useState(true);
 
   const toggleDir = (path: string) => {
     setExpandedDirs(prev => {
@@ -90,7 +93,7 @@ export function FileExplorer({
   return (
     <div className="flex flex-col h-full bg-background overflow-hidden">
       <div className="h-10 px-4 flex items-center text-sm font-semibold uppercase tracking-wider text-muted-foreground bg-muted/20 shrink-0">
-        <span>{folderName || "Explorer"}</span>
+        <span className="truncate">{folderName || "Explorer"}</span>
       </div>
 
       <ScrollArea className="flex-1 w-full">
@@ -99,7 +102,7 @@ export function FileExplorer({
           {!folderName && folderFiles.length === 0 ? (
             <div className="space-y-1">
               <div
-                className="flex items-center py-3 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800/70 text-base select-none transition-colors font-mono"
+                className="flex items-center py-3 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800/70 text-base select-none transition-colors"
                 onClick={onOpenFile}
                 role="button"
                 tabIndex={0}
@@ -110,11 +113,11 @@ export function FileExplorer({
                   }
                 }}
               >
-                <span className="w-5 text-center shrink-0 text-muted-foreground font-bold text-lg" aria-hidden="true">+</span>
+                <FileText size={18} className="shrink-0 text-muted-foreground" aria-hidden="true" />
                 <span className="text-muted-foreground ml-2">ファイルを開く...</span>
               </div>
               <div
-                className="flex items-center py-3 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800/70 text-base select-none transition-colors font-mono"
+                className="flex items-center py-3 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800/70 text-base select-none transition-colors"
                 onClick={onOpenFolder}
                 role="button"
                 tabIndex={0}
@@ -125,16 +128,44 @@ export function FileExplorer({
                   }
                 }}
               >
-                <span className="w-5 text-center shrink-0 text-muted-foreground font-bold text-lg" aria-hidden="true">+</span>
+                <FolderOpen size={18} className="shrink-0 text-muted-foreground" aria-hidden="true" />
                 <span className="text-muted-foreground ml-2">フォルダを開く...</span>
               </div>
             </div>
           ) : folderName && folderFiles.length > 0 ? (
             <>
-              <div className="px-4 py-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                {folderName}
+              {/* Root Folder Header - Clickable */}
+              <div
+                className={cn(
+                  "flex items-center py-3 px-4 cursor-pointer text-base select-none transition-colors font-mono",
+                  "hover:bg-slate-100 dark:hover:bg-slate-800/70"
+                )}
+                onClick={() => setRootExpanded(!rootExpanded)}
+                role="button"
+                aria-expanded={rootExpanded}
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setRootExpanded(!rootExpanded);
+                  }
+                }}
+              >
+                <span
+                  className={cn(
+                    "w-5 text-center shrink-0 font-bold text-lg",
+                    rootExpanded ? "text-blue-600 dark:text-blue-400" : "text-slate-600 dark:text-slate-400"
+                  )}
+                  aria-hidden="true"
+                >
+                  {rootExpanded ? "−" : "+"}
+                </span>
+                <span className="truncate font-semibold ml-2 uppercase text-xs tracking-wider text-muted-foreground">
+                  {folderName}
+                </span>
               </div>
-              {roots.map(file => renderFileItem(file, 0))}
+              {/* Files - only shown when expanded */}
+              {rootExpanded && roots.map(file => renderFileItem(file, 0))}
             </>
           ) : null}
         </div>
