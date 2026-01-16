@@ -1,7 +1,6 @@
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { FileText, Folder, FolderOpen, ChevronRight, ChevronDown, X } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { useState } from "react";
+import { FileTreeNode } from "@/components/file-tree/FileTreeNode";
 
 export interface OpenedFile {
   path: string;
@@ -16,10 +15,7 @@ export interface FolderFileEntry {
 }
 
 interface FileExplorerProps {
-  openedFiles: OpenedFile[];
   activeFilePath?: string;
-  onSelectFile: (file: OpenedFile) => void;
-  onCloseFile: (file: OpenedFile) => void;
   onOpenFile: () => void;
   onOpenFolder: () => void;
   folderName?: string;
@@ -28,10 +24,7 @@ interface FileExplorerProps {
 }
 
 export function FileExplorer({
-  openedFiles,
   activeFilePath,
-  onSelectFile,
-  onCloseFile,
   onOpenFile,
   onOpenFolder,
   folderName,
@@ -74,124 +67,71 @@ export function FileExplorer({
 
   const { roots, children } = buildTree(folderFiles);
 
-  const renderFileItem = (file: FolderFileEntry, depth: number = 0) => {
+  const renderFileItem = (file: FolderFileEntry, depth: number = 0): React.ReactNode => {
     const isExpanded = expandedDirs.has(file.path);
     const fileChildren = children[file.path] || [];
     const isActive = activeFilePath === file.path;
-    const openedFile = openedFiles.find(f => f.path === file.path);
-
-    if (file.is_dir) {
-      return (
-        <div key={file.path}>
-          <div
-            className={cn(
-              "flex items-center py-1 cursor-pointer text-sm select-none transition-colors hover:bg-slate-200/50 dark:hover:bg-slate-800"
-            )}
-            style={{ paddingLeft: `${depth * 12 + 8}px` }}
-            onClick={() => toggleDir(file.path)}
-          >
-            {isExpanded ? <ChevronDown size={12} className="mr-1" /> : <ChevronRight size={12} className="mr-1" />}
-            <Folder size={14} className="mr-2 text-amber-500" />
-            <span className="truncate">{file.filename}</span>
-          </div>
-          {isExpanded && fileChildren.map(child => renderFileItem(child, depth + 1))}
-        </div>
-      );
-    }
 
     return (
-      <div
+      <FileTreeNode
         key={file.path}
-        className={cn(
-          "flex items-center py-1 cursor-pointer text-sm select-none transition-colors group",
-          isActive
-            ? "bg-blue-500/10 text-blue-600"
-            : "hover:bg-slate-200/50 dark:hover:bg-slate-800"
-        )}
-        style={{ paddingLeft: `${depth * 12 + 20}px` }}
-        onClick={() => onFileClick(file.path, file.filename)}
-      >
-        <FileText size={14} className="mr-2 shrink-0 text-slate-500" />
-        <span className="truncate flex-1">{file.filename}</span>
-        {openedFile?.hasChanges && <span className="text-orange-500 font-bold mr-1">●</span>}
-        {openedFile && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onCloseFile(openedFile);
-            }}
-            className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-slate-300 dark:hover:bg-slate-700 rounded transition-all"
-          >
-            <X size={12} />
-          </button>
-        )}
-      </div>
+        file={file}
+        depth={depth}
+        isExpanded={isExpanded}
+        isActive={isActive}
+        children={fileChildren}
+        onToggle={toggleDir}
+        onFileClick={onFileClick}
+        renderChildren={renderFileItem}
+      />
     );
   };
 
   return (
     <div className="flex flex-col h-full bg-background overflow-hidden">
-      <div className="h-9 px-4 flex items-center text-xs font-semibold uppercase tracking-wider text-muted-foreground bg-muted/20 shrink-0">
+      <div className="h-10 px-4 flex items-center text-sm font-semibold uppercase tracking-wider text-muted-foreground bg-muted/20 shrink-0">
         <span>{folderName || "Explorer"}</span>
       </div>
 
       <ScrollArea className="flex-1 w-full">
         <div className="py-2">
-          {/* Opened Files Section */}
-          {openedFiles.length > 0 && (
-            <div className="mb-2">
-              <div className="px-4 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                開いているファイル
-              </div>
-              {openedFiles.map(file => (
-                <div
-                  key={file.path}
-                  className={cn(
-                    "flex items-center py-1 px-4 cursor-pointer text-sm select-none transition-colors group",
-                    activeFilePath === file.path
-                      ? "bg-blue-500/10 text-blue-600"
-                      : "hover:bg-slate-200/50 dark:hover:bg-slate-800"
-                  )}
-                  onClick={() => onSelectFile(file)}
-                >
-                  <FileText size={14} className="mr-2 shrink-0 text-slate-500" />
-                  <span className="truncate flex-1">{file.filename}</span>
-                  {file.hasChanges && <span className="text-orange-500 font-bold mr-1">●</span>}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onCloseFile(file);
-                    }}
-                    className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-slate-300 dark:hover:bg-slate-700 rounded transition-all"
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
           {/* Folder Tree Section */}
-          {!folderName && folderFiles.length === 0 && openedFiles.length === 0 ? (
+          {!folderName && folderFiles.length === 0 ? (
             <div className="space-y-1">
               <div
-                className="flex items-center py-2 px-4 cursor-pointer hover:bg-slate-200/50 dark:hover:bg-slate-800 text-sm select-none transition-colors"
+                className="flex items-center py-3 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800/70 text-base select-none transition-colors font-mono"
                 onClick={onOpenFile}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onOpenFile();
+                  }
+                }}
               >
-                <FileText size={14} className="mr-2 text-muted-foreground" />
-                <span className="text-muted-foreground">ファイルを開く...</span>
+                <span className="w-5 text-center shrink-0 text-muted-foreground font-bold text-lg" aria-hidden="true">+</span>
+                <span className="text-muted-foreground ml-2">ファイルを開く...</span>
               </div>
               <div
-                className="flex items-center py-2 px-4 cursor-pointer hover:bg-slate-200/50 dark:hover:bg-slate-800 text-sm select-none transition-colors"
+                className="flex items-center py-3 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800/70 text-base select-none transition-colors font-mono"
                 onClick={onOpenFolder}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onOpenFolder();
+                  }
+                }}
               >
-                <FolderOpen size={14} className="mr-2 text-muted-foreground" />
-                <span className="text-muted-foreground">フォルダを開く...</span>
+                <span className="w-5 text-center shrink-0 text-muted-foreground font-bold text-lg" aria-hidden="true">+</span>
+                <span className="text-muted-foreground ml-2">フォルダを開く...</span>
               </div>
             </div>
           ) : folderName && folderFiles.length > 0 ? (
             <>
-              <div className="px-4 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <div className="px-4 py-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 {folderName}
               </div>
               {roots.map(file => renderFileItem(file, 0))}

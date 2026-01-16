@@ -7,6 +7,7 @@ import { EditorPanel } from "./EditorPanel";
 import { FileExplorer, OpenedFile } from "./FileExplorer";
 import { MenuBar } from "./MenuBar";
 import { StatusBar } from "./StatusBar";
+import { EditorTabs } from "@/components/editor/EditorTabs";
 
 interface OpenFileResult {
   path: string;
@@ -134,7 +135,7 @@ export function MainLayout() {
     }
   };
 
-  // Select an already opened file
+  // Select an already opened file (for tabs)
   const handleSelectFile = (file: OpenedFile) => {
     const target = openedFiles.find(f => f.path === file.path);
     if (!target) return;
@@ -279,35 +280,42 @@ export function MainLayout() {
           {/* File Explorer */}
           <div className="w-64 shrink-0 h-full bg-background border-r overflow-hidden">
             <FileExplorer
-              openedFiles={openedFiles}
-              activeFilePath={activeFilePath || undefined}
-              onSelectFile={handleSelectFile}
-              onCloseFile={handleCloseFile}
               onOpenFile={handleOpenFile}
               onOpenFolder={handleOpenFolder}
               folderName={currentFolder?.name}
               folderFiles={folderFiles}
               onFileClick={handleOpenFileFromTree}
+              activeFilePath={activeFilePath || undefined}
             />
 
           </div>
 
           {/* Editor Area */}
-          <div className="flex-1 h-full bg-background overflow-hidden">
-            <EditorPanel
-                original={originalContent}
-                modified={anonymizedContent}
-                onAccept={handleAccept}
-                onModifiedChange={(value) => {
-                  setAnonymizedContent(value);
-                  if (activeFilePath) {
-                    setOpenedFiles(prev =>
-                      prev.map(f => f.path === activeFilePath ? { ...f, hasChanges: true, modifiedContent: value } : f)
-                    );
-                  }
-                }}
-                activeFileName={activeFile?.filename}
+          <div className="flex-1 h-full bg-background overflow-hidden flex flex-col">
+            {/* Tab Bar */}
+            <EditorTabs
+              files={openedFiles}
+              activeFilePath={activeFilePath || undefined}
+              onSelectFile={handleSelectFile}
+              onCloseFile={handleCloseFile}
             />
+            {/* Editor */}
+            <div className="flex-1 overflow-hidden">
+              <EditorPanel
+                  original={originalContent}
+                  modified={anonymizedContent}
+                  onAccept={handleAccept}
+                  onModifiedChange={(value) => {
+                    setAnonymizedContent(value);
+                    if (activeFilePath) {
+                      setOpenedFiles(prev =>
+                        prev.map(f => f.path === activeFilePath ? { ...f, hasChanges: true, modifiedContent: value } : f)
+                      );
+                    }
+                  }}
+                  activeFileName={activeFile?.filename}
+              />
+            </div>
           </div>
 
           {/* Chat Sidebar */}
