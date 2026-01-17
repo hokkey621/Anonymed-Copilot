@@ -114,7 +114,15 @@ export function ConfigSidebar({
   // Listen for chat streaming
   useEffect(() => {
     const unlistenStream = listen<{ chunk: string; full: string }>("chat-stream", (event) => {
-      setStreamingContent(event.payload.full);
+      // Remove [THOUGHT]:... and [thinking]...[/thinking] blocks from display
+      let cleaned = event.payload.full;
+      // Remove [THOUGHT]: ... patterns (entire line or until end of thought)
+      cleaned = cleaned.replace(/\[THOUGHT\]:?\s*[\s\S]*?(?=\n\n|\n[A-Z]|$)/gi, '');
+      // Remove [thinking]...[/thinking] blocks
+      cleaned = cleaned.replace(/\[thinking\][\s\S]*?\[\/thinking\]\s*/gi, '');
+      // Trim leading/trailing whitespace
+      cleaned = cleaned.trim();
+      setStreamingContent(cleaned);
     });
     return () => { unlistenStream.then(f => f()); };
   }, []);
@@ -207,28 +215,28 @@ export function ConfigSidebar({
   };
 
   const handleBulkCommit = async () => {
-    if (!currentDirPath) {
-      onRunAnonymization(taskContext);
-      return;
-    }
-    if (!currentPlan) {
-      console.error("No plan available");
-      return;
-    }
+    console.log("handleBulkCommit called", { currentDirPath, currentPlan, currentContent });
 
     setIsBulkExecuting(true);
-    setBulkProgress({ completed: 0, total: activeBulkPlan?.target_count || 0 });
+    setBulkProgress({ completed: 0, total: activeBulkPlan?.target_count || 1 });
 
     try {
-      await invoke("bulk_execute", {
-        dirPath: currentDirPath,
-        plan: currentPlan,
-        taskName: taskContext.replace(/\s+/g, '_')
-      });
-      setMessages(prev => [...prev, {
-        role: "assistant",
-        content: "✅ 完了しました。`anonymized_outputs` フォルダに保存されました。"
-      }]);
+      // If folder is available, use bulk execute
+      if (currentDirPath && currentPlan) {
+        await invoke("bulk_execute", {
+          dirPath: currentDirPath,
+          plan: currentPlan,
+          taskName: taskContext.replace(/\s+/g, '_')
+        });
+        setMessages(prev => [...prev, {
+          role: "assistant",
+          content: "✅ 完了しました。`anonymized_outputs` フォルダに保存されました。"
+        }]);
+      } else {
+        // Single file mode - use the original anonymization flow (analyze + apply with diff)
+        // No message needed - user will see the diff in the editor
+        onRunAnonymization(taskContext);
+      }
     } catch (e) {
       setMessages(prev => [...prev, { role: "assistant", content: `❌ エラー: ${e}` }]);
     } finally {
@@ -253,7 +261,7 @@ export function ConfigSidebar({
                     plan={m.bulkPlan}
                     workflowSteps={workflowSteps.length > 0 ? workflowSteps : m.workflowSteps}
                     onCommit={handleBulkCommit}
-                    isExecuting={isBulkExecuting}
+                    isExecuting={isBulkExecuting || isProcessing}
                     progress={bulkProgress || undefined}
                   />
                 </div>
@@ -374,7 +382,7 @@ export function ConfigSidebar({
             className="shrink-0 gap-1.5"
           >
             <Send size={14} />
-            実行
+            送信
           </Button>
         </div>
 
