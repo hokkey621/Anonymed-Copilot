@@ -313,8 +313,21 @@ pub async fn agent_chat_streaming(
         }
     }
 
+    // Emit: Analyzing phase
+    use tauri::Emitter;
+    let _ = app.emit("thinking-phase", serde_json::json!({
+        "phase": "analyzing",
+        "message": "テキストを分析中..."
+    }));
+
     // Use streaming chat
     let ai_response = handler.chat_streaming(history, &app).await?;
+
+    // Emit: Complete phase
+    let _ = app.emit("thinking-phase", serde_json::json!({
+        "phase": "complete",
+        "message": "完了"
+    }));
 
     // Generate execution plan when needed
     let (bulk_plan, workflow_steps) = if is_bulk_request || has_purpose {

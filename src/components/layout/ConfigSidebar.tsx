@@ -87,6 +87,7 @@ export function ConfigSidebar({
   const [isBulkExecuting, setIsBulkExecuting] = useState(false);
   const [activeBulkPlan, setActiveBulkPlan] = useState<BulkExecutionPlan | null>(null);
   const [streamingContent, setStreamingContent] = useState<string>("");
+  const [thinkingPhase, setThinkingPhase] = useState<string>("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Listen for agent progress
@@ -116,6 +117,14 @@ export function ConfigSidebar({
       setStreamingContent(event.payload.full);
     });
     return () => { unlistenStream.then(f => f()); };
+  }, []);
+
+  // Listen for thinking phases
+  useEffect(() => {
+    const unlistenPhase = listen<{ phase: string; message: string }>("thinking-phase", (event) => {
+      setThinkingPhase(event.payload.message);
+    });
+    return () => { unlistenPhase.then(f => f()); };
   }, []);
 
   // Auto-scroll to bottom
@@ -321,10 +330,13 @@ export function ConfigSidebar({
                 {streamingContent ? (
                   <p className="whitespace-pre-wrap break-words">{streamingContent}</p>
                 ) : (
-                  <div className="flex items-center gap-1">
-                    <span className="inline-block w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                    <span className="inline-block w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                    <span className="inline-block w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <span className="inline-flex gap-1">
+                      <span className="inline-block w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <span className="inline-block w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                      <span className="inline-block w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                    </span>
+                    <span className="text-xs">{thinkingPhase || "考え中..."}</span>
                   </div>
                 )}
               </div>
