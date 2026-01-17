@@ -232,4 +232,70 @@ impl GeminiHandler {
         }
         Err("No content generated".to_string())
     }
+
+    /// Multi-turn chat with streaming via Tauri events
+    pub async fn chat_streaming(&self, history: Vec<Content>, app: &tauri::AppHandle) -> Result<String, String> {
+        use futures_util::StreamExt;
+        use tauri::Emitter;
+
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?key={}&alt=sse",
+            GEMINI_MODEL, self.api_key
+        );
+
+        let request_body = GeminiRequest {
+            contents: history,
+            system_instruction: None,
+            generation_config: GenerationConfig { temperature: 0.7, response_mime_type: "text/plain".to_string() },
+        };
+
+        let response = self.client
+            .post(&url)
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(format!("Gemini API Error {}: {}", status, text));
+        }
+
+        let mut full_text = String::new();
+        let mut stream = response.bytes_stream();
+
+        while let Some(chunk_result) = stream.next().await {
+            match chunk_result {
+                Ok(chunk) => {
+                    let chunk_str = String::from_utf8_lossy(&chunk);
+                    // Parse SSE format: data: {...}
+                    for line in chunk_str.lines() {
+                        if let Some(json_str) = line.strip_prefix("data: ") {
+                            if let Ok(resp) = serde_json::from_str::<GeminiResponse>(json_str) {
+                                if let Some(candidate) = resp.candidates.first() {
+                                    if let Some(part) = candidate.content.parts.first() {
+                                        full_text.push_str(&part.text);
+                                        // Emit streaming event
+                                        let _ = app.emit("chat-stream", serde_json::json!({
+                                            "chunk": part.text.clone(),
+                                            "full": full_text.clone()
+                                        }));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+
+        // Emit completion event
+        let _ = app.emit("chat-stream-end", serde_json::json!({
+            "full": full_text.clone()
+        }));
+
+        Ok(full_text)
+    }
 }
