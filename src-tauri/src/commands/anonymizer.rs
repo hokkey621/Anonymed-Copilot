@@ -68,8 +68,22 @@ fn detect_bulk_intent(messages: &[ChatMessage]) -> bool {
     false
 }
 
+/// Check if the user has expressed anonymization purpose
+fn detect_purpose_intent(messages: &[ChatMessage]) -> bool {
+    let purpose_keywords = [
+        "ワクチン", "教材", "教育", "症例報告", "研究", "開発用", "作成用",
+        "学会", "論文", "公開", "データ分析", "計画を立てて", "実行して"
+    ];
+
+    if let Some(last_user_msg) = messages.iter().rev().find(|m| m.role == "user") {
+        let content = &last_user_msg.content;
+        return purpose_keywords.iter().any(|kw| content.contains(kw));
+    }
+    false
+}
+
 /// Generate contextual suggestions based on conversation state
-fn generate_contextual_suggestions(messages: &[ChatMessage], is_bulk_request: bool) -> Option<Vec<String>> {
+fn generate_contextual_suggestions(messages: &[ChatMessage], is_bulk_request: bool, has_purpose: bool) -> Option<Vec<String>> {
     // Count user messages to determine conversation phase
     let user_msg_count = messages.iter().filter(|m| m.role == "user").count();
 
@@ -101,6 +115,14 @@ fn generate_contextual_suggestions(messages: &[ChatMessage], is_bulk_request: bo
             ]);
         }
 
+        // Purpose expressed - ask to create plan
+        if has_purpose {
+            return Some(vec![
+                "計画を立てて".to_string(),
+                "もう少し詳しく".to_string(),
+            ]);
+        }
+
         // Anonymization intent expressed - ask for purpose
         if content.contains("匿名化") && !content.contains("用") {
             return Some(vec![
@@ -113,7 +135,7 @@ fn generate_contextual_suggestions(messages: &[ChatMessage], is_bulk_request: bo
 
     // Default suggestions for continuing conversation
     Some(vec![
-        "一括で処理して".to_string(),
+        "計画を立てて".to_string(),
         "詳しく教えて".to_string(),
     ])
 }
@@ -129,7 +151,7 @@ pub async fn agent_chat(
 
     let is_bulk_request = detect_bulk_intent(&messages);
 
-    // Build editor context if content is provided
+    // Build editor context if content is provided (simplified - no JSON format request)
     let editor_context = editor_content
         .filter(|c| !c.is_empty())
         .map(|c| format!(
@@ -140,14 +162,7 @@ pub async fn agent_chat(
 {}
 ```
 
-上記のテキストを分析し、最適な匿名化プランをJSON形式で提案してください。
-JSONフォーマット:
-{{
-  "task_name": "タスク名",
-  "replacements": [
-    {{ "original": "元のテキスト", "replacement": "置換後", "start": 開始位置, "end": 終了位置, "reason": "理由", "category": "カテゴリ" }}
-  ]
-}}"#,
+上記のテキストに含まれる個人情報の種類と対応策を簡潔に説明してください。"#,
             c
         ))
         .unwrap_or_default();
@@ -187,8 +202,11 @@ JSONフォーマット:
 
     let ai_response = handler.chat(history).await?;
 
-    // Only generate execution plan when user explicitly requests bulk execution
-    let (bulk_plan, workflow_steps) = if is_bulk_request {
+    // Check if user has expressed anonymization purpose
+    let has_purpose = detect_purpose_intent(&messages);
+
+    // Generate execution plan when user requests bulk execution OR has expressed purpose
+    let (bulk_plan, workflow_steps) = if is_bulk_request || has_purpose {
         let effective_count = if file_count > 0 { file_count } else { 1 };
         let estimated_time = (effective_count as u64) * 50;
 
@@ -196,9 +214,11 @@ JSONフォーマット:
             target_count: effective_count,
             estimated_time_ms: estimated_time,
             policy_summary: vec![
-                "Apply approved replacement rules".to_string(),
-                "Output to separate directory".to_string(),
-                "Generate SHA-256 hashes for audit".to_string(),
+                "氏名 → 削除".to_string(),
+                "年齢 → 5歳刻み".to_string(),
+                "日付 → 月単位".to_string(),
+                "住所 → 都道府県のみ".to_string(),
+                "病名 → 一般化".to_string(),
             ],
         };
 
@@ -226,7 +246,7 @@ JSONフォーマット:
     };
 
     // Generate contextual suggestions based on conversation state
-    let suggestions = generate_contextual_suggestions(&messages, is_bulk_request);
+    let suggestions = generate_contextual_suggestions(&messages, is_bulk_request, has_purpose);
 
     Ok(AgentChatResponse {
         message: ai_response,
