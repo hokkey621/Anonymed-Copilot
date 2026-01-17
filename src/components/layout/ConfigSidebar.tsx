@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ChatMessage } from "@/components/chat/ChatMessage";
 import { BulkPlanCard } from "@/components/chat/BulkPlanCard";
+import { SuggestionChips } from "@/components/chat/SuggestionChips";
 import { AgentProgressEvent } from "./ProgressIndicator";
 import { Send, ChevronDown, FileText, Loader2 } from "lucide-react";
 
@@ -13,6 +14,7 @@ interface Message {
   content: string;
   bulkPlan?: BulkExecutionPlan;
   workflowSteps?: WorkflowStep[];
+  suggestions?: string[];
 }
 
 interface BulkExecutionPlan {
@@ -40,6 +42,7 @@ interface AgentChatResponse {
   message: string;
   bulk_plan: BulkExecutionPlan | null;
   workflow_steps: WorkflowStep[] | null;
+  suggestions: string[] | null;
 }
 
 interface ConfigSidebarProps {
@@ -68,7 +71,11 @@ export function ConfigSidebar({
   currentFileName = ""
 }: ConfigSidebarProps) {
   const [messages, setMessages] = useState<Message[]>([
-    { role: "assistant", content: "どのような匿名化が必要ですか？\n\n例:\n- 「ワクチン開発用に匿名化して」\n- 「教育資料として使いたい」\n- 「全件に適用して」" }
+    {
+      role: "assistant",
+      content: "どのような匿名化が必要ですか？",
+      suggestions: ["匿名化したい", "使い方が知りたい"]
+    }
   ]);
   const [inputInfo, setInputInfo] = useState("");
   const [isChatLoading, setIsChatLoading] = useState(false);
@@ -145,7 +152,8 @@ export function ConfigSidebar({
         role: "assistant",
         content: response.message,
         bulkPlan: response.bulk_plan || undefined,
-        workflowSteps: response.workflow_steps || undefined
+        workflowSteps: response.workflow_steps || undefined,
+        suggestions: response.suggestions || undefined
       };
 
       setMessages(prev => [...prev, newMessage]);
@@ -224,6 +232,61 @@ export function ConfigSidebar({
               )}
             </div>
           ))}
+          {/* Show suggestions from the last assistant message */}
+          {messages.length > 0 && messages[messages.length - 1].role === "assistant" &&
+           messages[messages.length - 1].suggestions &&
+           messages[messages.length - 1].suggestions!.length > 0 && (
+            <SuggestionChips
+              suggestions={messages[messages.length - 1].suggestions!}
+              onSelect={async (text) => {
+                // Directly send the suggestion as a message
+                if (!currentContent || isChatLoading) return;
+
+                const userMsg: Message = { role: "user", content: text };
+                setMessages(prev => [...prev, userMsg]);
+                setIsChatLoading(true);
+
+                const newHistory = [...messages, userMsg];
+                let apiMessages = newHistory.map(m => ({ role: m.role, content: m.content }));
+
+                if (currentContent && currentContent.trim().length > 0) {
+                  const firstUserIndex = apiMessages.findIndex(m => m.role === "user");
+                  if (firstUserIndex !== -1) {
+                    apiMessages[firstUserIndex].content = `[Document Context]:\n${currentContent}\n\n[User]: ${apiMessages[firstUserIndex].content}`;
+                  }
+                }
+
+                try {
+                  const response = await invoke<AgentChatResponse>("agent_chat", {
+                    messages: apiMessages,
+                    fileCount: fileCount,
+                    editorContent: currentContent || null
+                  });
+
+                  const newMessage: Message = {
+                    role: "assistant",
+                    content: response.message,
+                    bulkPlan: response.bulk_plan || undefined,
+                    workflowSteps: response.workflow_steps || undefined,
+                    suggestions: response.suggestions || undefined
+                  };
+
+                  setMessages(prev => [...prev, newMessage]);
+
+                  if (response.bulk_plan && response.workflow_steps) {
+                    setActiveBulkPlan(response.bulk_plan);
+                    setWorkflowSteps(response.workflow_steps);
+                  }
+                } catch (e) {
+                  console.error("Chat error:", e);
+                  setMessages(prev => [...prev, { role: "assistant", content: `エラー: ${e}` }]);
+                } finally {
+                  setIsChatLoading(false);
+                }
+              }}
+              disabled={isChatLoading || !currentContent}
+            />
+          )}
           {isChatLoading && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="w-4 h-4 animate-spin" />

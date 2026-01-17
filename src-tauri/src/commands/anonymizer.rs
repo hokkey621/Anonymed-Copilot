@@ -51,6 +51,7 @@ pub struct AgentChatResponse {
     pub message: String,
     pub bulk_plan: Option<BulkExecutionPlan>,
     pub workflow_steps: Option<Vec<WorkflowStep>>,
+    pub suggestions: Option<Vec<String>>,
 }
 
 /// Check if the user message indicates bulk execution intent
@@ -65,6 +66,56 @@ fn detect_bulk_intent(messages: &[ChatMessage]) -> bool {
         return bulk_keywords.iter().any(|kw| lower_content.contains(kw));
     }
     false
+}
+
+/// Generate contextual suggestions based on conversation state
+fn generate_contextual_suggestions(messages: &[ChatMessage], is_bulk_request: bool) -> Option<Vec<String>> {
+    // Count user messages to determine conversation phase
+    let user_msg_count = messages.iter().filter(|m| m.role == "user").count();
+
+    // Initial state - no user messages yet or first interaction
+    if user_msg_count == 0 {
+        return Some(vec![
+            "匿名化したい".to_string(),
+            "使い方が知りたい".to_string(),
+        ]);
+    }
+
+    // Check if user is asking about usage
+    if let Some(last_user_msg) = messages.iter().rev().find(|m| m.role == "user") {
+        let content = &last_user_msg.content;
+
+        // Usage questions - provide help suggestions
+        if content.contains("使い方") || content.contains("ヘルプ") || content.contains("help") {
+            return Some(vec![
+                "ファイルを開きたい".to_string(),
+                "匿名化を開始".to_string(),
+            ]);
+        }
+
+        // Bulk request acknowledged - provide execution options
+        if is_bulk_request {
+            return Some(vec![
+                "実行して".to_string(),
+                "キャンセル".to_string(),
+            ]);
+        }
+
+        // Anonymization intent expressed - ask for purpose
+        if content.contains("匿名化") && !content.contains("用") {
+            return Some(vec![
+                "ワクチン開発用".to_string(),
+                "教材作成用".to_string(),
+                "症例報告用".to_string(),
+            ]);
+        }
+    }
+
+    // Default suggestions for continuing conversation
+    Some(vec![
+        "一括で処理して".to_string(),
+        "詳しく教えて".to_string(),
+    ])
 }
 
 /// Enhanced agent chat that supports bulk execution planning
@@ -173,10 +224,14 @@ JSONフォーマット:
 
     let (bulk_plan, workflow_steps) = (Some(plan), Some(steps));
 
+    // Generate contextual suggestions based on conversation state
+    let suggestions = generate_contextual_suggestions(&messages, is_bulk_request);
+
     Ok(AgentChatResponse {
         message: ai_response,
         bulk_plan,
         workflow_steps,
+        suggestions,
     })
 }
 
