@@ -1,12 +1,13 @@
 import { DiffEditor } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
-import { Check, Clipboard, Eye, EyeOff, FileText, Sparkles, AlertTriangle, Search } from "lucide-react";
+import { Check, Clipboard, Eye, EyeOff, FileText, Sparkles, AlertTriangle, Search, ChevronDown, ChevronUp } from "lucide-react";
 import { useState, useRef, useCallback, useEffect } from "react";
 import {
   DiffBlock,
   getDiffBlocks,
   createApproveWidget,
   updateWidgetToApproved,
+  updateWidgetToUnapproved,
 } from "@/lib/editorDecorations";
 
 interface EditorPanelProps {
@@ -51,23 +52,98 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
   // N+1 step is active when all blocks approved but non-highlighted not yet confirmed
   const isNPlusOneStep = allBlocksApproved && !nonHighlightedConfirmed;
 
-  // Handle block approval
-  const handleApproveBlock = useCallback((blockId: number) => {
+  // Progress percentage
+  const progressPercent = totalSteps > 0 ? (completedSteps / totalSteps) * 100 : 0;
+
+  // Find next unapproved block
+  const getNextUnapprovedBlock = useCallback(() => {
+    return diffBlocks.find(block => !approvedBlockIds.has(block.id));
+  }, [diffBlocks, approvedBlockIds]);
+
+  // Jump to next unapproved block
+  const jumpToNextUnapproved = useCallback(() => {
+    const nextBlock = getNextUnapprovedBlock();
+    if (nextBlock && modifiedEditorRef.current) {
+      modifiedEditorRef.current.revealLineInCenter(nextBlock.startLine);
+      modifiedEditorRef.current.setPosition({ lineNumber: nextBlock.startLine, column: 1 });
+      modifiedEditorRef.current.focus();
+    }
+  }, [getNextUnapprovedBlock]);
+
+  // Jump to previous unapproved block
+  const jumpToPrevUnapproved = useCallback(() => {
+    const unapprovedBlocks = diffBlocks.filter(block => !approvedBlockIds.has(block.id));
+    if (unapprovedBlocks.length > 0 && modifiedEditorRef.current) {
+      const lastBlock = unapprovedBlocks[unapprovedBlocks.length - 1];
+      modifiedEditorRef.current.revealLineInCenter(lastBlock.startLine);
+      modifiedEditorRef.current.setPosition({ lineNumber: lastBlock.startLine, column: 1 });
+      modifiedEditorRef.current.focus();
+    }
+  }, [diffBlocks, approvedBlockIds]);
+
+  // Handle block approval toggle
+  const handleToggleApproveBlock = useCallback((blockId: number) => {
     setApprovedBlockIds(prev => {
       const newSet = new Set(prev);
-      newSet.add(blockId);
+      const isCurrentlyApproved = newSet.has(blockId);
+
+      if (isCurrentlyApproved) {
+        // Unapprove
+        newSet.delete(blockId);
+        const widget = widgetsRef.current.get(blockId);
+        if (widget) {
+          const domNode = widget.getDomNode();
+          if (domNode) {
+            updateWidgetToUnapproved(domNode);
+          }
+        }
+      } else {
+        // Approve
+        newSet.add(blockId);
+        const widget = widgetsRef.current.get(blockId);
+        if (widget) {
+          const domNode = widget.getDomNode();
+          if (domNode) {
+            updateWidgetToApproved(domNode);
+          }
+        }
+      }
+
       return newSet;
     });
-
-    // Update widget appearance
-    const widget = widgetsRef.current.get(blockId);
-    if (widget) {
-      const domNode = widget.getDomNode();
-      if (domNode) {
-        updateWidgetToApproved(domNode);
-      }
-    }
   }, []);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only handle if focus mode is enabled and we have changes
+      if (!focusModeEnabled || !hasChanges) return;
+
+      // Enter or Space to approve current block at cursor
+      if (e.key === "Enter" && e.ctrlKey) {
+        e.preventDefault();
+        const nextBlock = getNextUnapprovedBlock();
+        if (nextBlock) {
+          handleToggleApproveBlock(nextBlock.id);
+        }
+      }
+
+      // Ctrl+↓ to jump to next unapproved
+      if (e.key === "ArrowDown" && e.ctrlKey && e.shiftKey) {
+        e.preventDefault();
+        jumpToNextUnapproved();
+      }
+
+      // Ctrl+↑ to jump to previous unapproved
+      if (e.key === "ArrowUp" && e.ctrlKey && e.shiftKey) {
+        e.preventDefault();
+        jumpToPrevUnapproved();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [focusModeEnabled, hasChanges, getNextUnapprovedBlock, handleToggleApproveBlock, jumpToNextUnapproved, jumpToPrevUnapproved]);
 
   // Apply decorations to dim approved blocks
   useEffect(() => {
@@ -177,12 +253,14 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
 
         // Create new widgets for each diff block (positioned at bottom-right)
         blocks.forEach(block => {
-          const widget = createApproveWidget(block.id, block.endLine, modifiedEditor, handleApproveBlock);
+          const widget = createApproveWidget(block.id, block.endLine, modifiedEditor, handleToggleApproveBlock);
           widgetsRef.current.set(block.id, widget);
           modifiedEditor.addContentWidget(widget);
         });
       });
   };
+
+  const nextUnapproved = getNextUnapprovedBlock();
 
   return (
     <div className="h-full flex flex-col bg-background">
@@ -217,6 +295,26 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
                   {focusModeEnabled ? <Eye size={12} /> : <EyeOff size={12} />}
                   <span>Focus</span>
                 </button>
+
+                {/* Navigation buttons */}
+                {totalBlocks > 0 && !isNPlusOneStep && nextUnapproved && (
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={jumpToPrevUnapproved}
+                      className="flex items-center justify-center w-6 h-6 rounded hover:bg-slate-200 text-slate-600 transition-colors"
+                      title="前の未承認へ (Ctrl+Shift+↑)"
+                    >
+                      <ChevronUp size={14} />
+                    </button>
+                    <button
+                      onClick={jumpToNextUnapproved}
+                      className="flex items-center justify-center w-6 h-6 rounded hover:bg-slate-200 text-slate-600 transition-colors"
+                      title="次の未承認へ (Ctrl+Shift+↓)"
+                    >
+                      <ChevronDown size={14} />
+                    </button>
+                  </div>
+                )}
 
                 {totalBlocks > 0 && (
                   <span className={`text-xs px-2 py-0.5 rounded ${
@@ -267,6 +365,18 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
               )}
           </div>
       </div>
+
+      {/* Progress Bar */}
+      {hasChanges && totalBlocks > 0 && (
+        <div className="h-1 bg-slate-200 shrink-0">
+          <div
+            className={`h-full transition-all duration-300 ${
+              allComplete ? "bg-green-500" : isNPlusOneStep ? "bg-red-400" : "bg-amber-400"
+            }`}
+            style={{ width: `${progressPercent}%` }}
+          />
+        </div>
+      )}
 
       {/* N+1th Step Banner: Check non-highlighted areas */}
       {isNPlusOneStep && hasChanges && (

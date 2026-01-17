@@ -103,15 +103,17 @@ export function getDiffBlocks(
 /**
  * Creates an approval widget for a diff block.
  * Positioned at the bottom-right of the block.
+ * Supports toggle (click again to unapprove).
  */
 export function createApproveWidget(
   blockId: number,
   endLineNumber: number,
   editor: monaco.editor.IStandaloneCodeEditor,
-  onApprove: (blockId: number) => void
+  onToggleApprove: (blockId: number) => void
 ): monaco.editor.IContentWidget {
   const domNode = document.createElement("button");
   domNode.className = "approve-button-widget";
+  domNode.setAttribute("data-block-id", String(blockId));
   domNode.innerHTML = `
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <polyline points="20 6 9 17 4 12"></polyline>
@@ -120,7 +122,7 @@ export function createApproveWidget(
   `;
   domNode.onclick = (e) => {
     e.stopPropagation();
-    onApprove(blockId);
+    onToggleApprove(blockId);
   };
 
   // Get the maximum column for the end line to position at the right
@@ -146,4 +148,19 @@ export function createApproveWidget(
 export function updateWidgetToApproved(widgetDomNode: HTMLElement): void {
   widgetDomNode.classList.add("approved");
   widgetDomNode.innerHTML = `<span>✓ 確認済</span>`;
+  widgetDomNode.title = "クリックで承認を取り消し";
+}
+
+/**
+ * Updates the approval widget to show unapproved state.
+ */
+export function updateWidgetToUnapproved(widgetDomNode: HTMLElement): void {
+  widgetDomNode.classList.remove("approved");
+  widgetDomNode.innerHTML = `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="20 6 9 17 4 12"></polyline>
+    </svg>
+    <span>承認</span>
+  `;
+  widgetDomNode.title = "";
 }
