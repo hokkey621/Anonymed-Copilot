@@ -102,7 +102,7 @@ export function FileExplorer({
           {!folderName && folderFiles.length === 0 ? (
             <div className="space-y-1">
               <div
-                className="flex items-center py-3 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800/70 text-base select-none transition-colors"
+                className="flex items-center py-3 px-4 cursor-pointer hover:bg-slate-60 dark:hover:bg-slate-800/70 text-base select-none transition-colors"
                 onClick={onOpenFile}
                 role="button"
                 tabIndex={0}
@@ -117,7 +117,7 @@ export function FileExplorer({
                 <span className="text-muted-foreground ml-2">ファイルを開く...</span>
               </div>
               <div
-                className="flex items-center py-3 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800/70 text-base select-none transition-colors"
+                className="flex items-center py-3 px-4 cursor-pointer hover:bg-slate-60 dark:hover:bg-slate-800/70 text-base select-none transition-colors"
                 onClick={onOpenFolder}
                 role="button"
                 tabIndex={0}

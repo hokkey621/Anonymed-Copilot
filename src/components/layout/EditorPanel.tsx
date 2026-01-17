@@ -1,5 +1,13 @@
 import { DiffEditor } from "@monaco-editor/react";
-import { Check, Clipboard, FileText } from "lucide-react";
+import * as monaco from "monaco-editor";
+import { Check, Clipboard, Eye, EyeOff, FileText, Sparkles, AlertTriangle, Search } from "lucide-react";
+import { useState, useRef, useCallback, useEffect } from "react";
+import {
+  DiffBlock,
+  getDiffBlocks,
+  createApproveWidget,
+  updateWidgetToApproved,
+} from "@/lib/editorDecorations";
 
 interface EditorPanelProps {
   original?: string;
@@ -12,20 +20,167 @@ interface EditorPanelProps {
 export function EditorPanel({ original = "", modified = "", onAccept, onModifiedChange, activeFileName }: EditorPanelProps) {
   const hasChanges = original !== modified;
 
+  // Focus Mode state
+  const [focusModeEnabled, setFocusModeEnabled] = useState(true);
+  const [diffBlocks, setDiffBlocks] = useState<DiffBlock[]>([]);
+  const [approvedBlockIds, setApprovedBlockIds] = useState<Set<number>>(new Set());
+
+  // N+1th check: confirmation that non-highlighted areas were reviewed
+  const [nonHighlightedConfirmed, setNonHighlightedConfirmed] = useState(false);
+
+  // Refs for Monaco editor instances and decorations
+  const diffEditorRef = useRef<monaco.editor.IStandaloneDiffEditor | null>(null);
+  const modifiedEditorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const decorationIdsRef = useRef<string[]>([]);
+  const widgetsRef = useRef<Map<number, monaco.editor.IContentWidget>>(new Map());
+
   const handleCopy = () => {
        navigator.clipboard.writeText(modified);
   };
 
-  const handleEditorDidMount = (editor: any) => {
+  // Calculate approval progress
+  const approvedCount = approvedBlockIds.size;
+  const totalBlocks = diffBlocks.length;
+  const allBlocksApproved = totalBlocks > 0 && approvedCount === totalBlocks;
+
+  // Total steps = N blocks + 1 (non-highlighted check)
+  const totalSteps = totalBlocks + 1;
+  const completedSteps = approvedCount + (nonHighlightedConfirmed ? 1 : 0);
+  const allComplete = allBlocksApproved && nonHighlightedConfirmed;
+
+  // N+1 step is active when all blocks approved but non-highlighted not yet confirmed
+  const isNPlusOneStep = allBlocksApproved && !nonHighlightedConfirmed;
+
+  // Handle block approval
+  const handleApproveBlock = useCallback((blockId: number) => {
+    setApprovedBlockIds(prev => {
+      const newSet = new Set(prev);
+      newSet.add(blockId);
+      return newSet;
+    });
+
+    // Update widget appearance
+    const widget = widgetsRef.current.get(blockId);
+    if (widget) {
+      const domNode = widget.getDomNode();
+      if (domNode) {
+        updateWidgetToApproved(domNode);
+      }
+    }
+  }, []);
+
+  // Apply decorations to dim approved blocks
+  useEffect(() => {
+    if (!modifiedEditorRef.current || !focusModeEnabled) return;
+
+    // Build decorations for approved blocks (dim them)
+    const newDecorations: monaco.editor.IModelDeltaDecoration[] = [];
+
+    diffBlocks.forEach(block => {
+      if (approvedBlockIds.has(block.id)) {
+        // Approved blocks get dimmed
+        newDecorations.push({
+          range: new monaco.Range(block.startLine, 1, block.endLine, 1),
+          options: {
+            isWholeLine: true,
+            className: "approved-line-dimmed",
+            inlineClassName: "approved-text-dimmed",
+          },
+        });
+      }
+    });
+
+    // N+1 step: dim ALL diff blocks to focus on non-highlighted areas
+    if (isNPlusOneStep) {
+      // Clear previous decorations and apply to all blocks
+      const allBlockDecorations: monaco.editor.IModelDeltaDecoration[] = diffBlocks.map(block => ({
+        range: new monaco.Range(block.startLine, 1, block.endLine, 1),
+        options: {
+          isWholeLine: true,
+          className: "approved-line-dimmed",
+          inlineClassName: "approved-text-dimmed",
+        },
+      }));
+      decorationIdsRef.current = modifiedEditorRef.current.deltaDecorations(
+        decorationIdsRef.current,
+        allBlockDecorations
+      );
+    } else {
+      decorationIdsRef.current = modifiedEditorRef.current.deltaDecorations(
+        decorationIdsRef.current,
+        newDecorations
+      );
+    }
+  }, [approvedBlockIds, diffBlocks, focusModeEnabled, isNPlusOneStep]);
+
+  // Clear decorations when Focus Mode is disabled
+  useEffect(() => {
+    if (!modifiedEditorRef.current) return;
+
+    if (!focusModeEnabled) {
+      decorationIdsRef.current = modifiedEditorRef.current.deltaDecorations(
+        decorationIdsRef.current,
+        []
+      );
+    }
+  }, [focusModeEnabled]);
+
+  // Reset state when content changes
+  useEffect(() => {
+    setApprovedBlockIds(new Set());
+    setDiffBlocks([]);
+    setNonHighlightedConfirmed(false);
+
+    // Clear widgets
+    if (modifiedEditorRef.current) {
+      widgetsRef.current.forEach(widget => {
+        modifiedEditorRef.current?.removeContentWidget(widget);
+      });
+      widgetsRef.current.clear();
+    }
+
+    // Clear decorations
+    if (modifiedEditorRef.current && decorationIdsRef.current.length > 0) {
+      decorationIdsRef.current = modifiedEditorRef.current.deltaDecorations(
+        decorationIdsRef.current,
+        []
+      );
+    }
+  }, [original, modified]);
+
+  const handleEditorDidMount = (editor: monaco.editor.IStandaloneDiffEditor) => {
+      diffEditorRef.current = editor;
+
       // Hide line numbers on the original (left) editor
       const originalEditor = editor.getOriginalEditor();
       originalEditor.updateOptions({ lineNumbers: 'off' });
 
       const modifiedEditor = editor.getModifiedEditor();
+      modifiedEditorRef.current = modifiedEditor;
+
       modifiedEditor.onDidChangeModelContent(() => {
           if (onModifiedChange) {
               onModifiedChange(modifiedEditor.getValue());
           }
+      });
+
+      // Listen for diff updates
+      editor.onDidUpdateDiff(() => {
+        const blocks = getDiffBlocks(editor);
+        setDiffBlocks(blocks);
+
+        // Clear old widgets
+        widgetsRef.current.forEach(widget => {
+          modifiedEditor.removeContentWidget(widget);
+        });
+        widgetsRef.current.clear();
+
+        // Create new widgets for each diff block (positioned at bottom-right)
+        blocks.forEach(block => {
+          const widget = createApproveWidget(block.id, block.endLine, modifiedEditor, handleApproveBlock);
+          widgetsRef.current.set(block.id, widget);
+          modifiedEditor.addContentWidget(widget);
+        });
       });
   };
 
@@ -46,6 +201,41 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
                 {hasChanges ? "Review Changes" : "Editor"}
               </span>
             )}
+
+            {/* Focus Mode toggle and progress */}
+            {hasChanges && (
+              <div className="flex items-center gap-2 ml-4">
+                <button
+                  onClick={() => setFocusModeEnabled(!focusModeEnabled)}
+                  className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors ${
+                    focusModeEnabled
+                      ? "bg-blue-100 text-blue-700 hover:bg-blue-200"
+                      : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                  }`}
+                  title={focusModeEnabled ? "Disable Focus Mode" : "Enable Focus Mode"}
+                >
+                  {focusModeEnabled ? <Eye size={12} /> : <EyeOff size={12} />}
+                  <span>Focus</span>
+                </button>
+
+                {totalBlocks > 0 && (
+                  <span className={`text-xs px-2 py-0.5 rounded ${
+                    allComplete
+                      ? "bg-green-100 text-green-700"
+                      : isNPlusOneStep
+                        ? "bg-red-100 text-red-700"
+                        : "bg-amber-100 text-amber-700"
+                  }`}>
+                    {allComplete
+                      ? "✓ 全て確認済"
+                      : isNPlusOneStep
+                        ? `最終確認（非ハイライト箇所）`
+                        : `${completedSteps}/${totalSteps} 確認中`
+                    }
+                  </span>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
@@ -59,18 +249,68 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
                         <Clipboard size={14} />
                         <span>Copy</span>
                     </button>
+                    {/* Show prominent Apply button when all complete */}
                     <button
                         onClick={onAccept}
-                        className="flex items-center gap-1 text-xs px-3 py-1 bg-green-600 hover:bg-green-700 text-white rounded shadow-sm transition-colors"
-                        title="Overwrite original with modified text"
+                        className={`flex items-center gap-1 text-xs px-3 py-1 rounded shadow-sm transition-all ${
+                          allComplete
+                            ? "bg-green-600 hover:bg-green-700 text-white animate-pulse"
+                            : "bg-slate-400 text-white cursor-not-allowed opacity-60"
+                        }`}
+                        title={allComplete ? "全ての変更を適用" : "全ての確認ステップを完了してください"}
+                        disabled={!allComplete}
                     >
-                        <Check size={14} />
-                        <span>Apply Changes</span>
+                        {allComplete ? <Sparkles size={14} /> : <Check size={14} />}
+                        <span>{allComplete ? "変更を適用" : "Apply Changes"}</span>
                     </button>
                   </>
               )}
           </div>
       </div>
+
+      {/* N+1th Step Banner: Check non-highlighted areas */}
+      {isNPlusOneStep && hasChanges && (
+        <div className="bg-red-50 border-b-2 border-red-300 px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center justify-center w-8 h-8 rounded-full bg-red-200 text-red-700">
+              <Search size={18} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 text-red-800 font-medium text-sm">
+                <AlertTriangle size={14} />
+                <span>最終確認: 薄くなっていない箇所をチェック</span>
+              </div>
+              <p className="text-xs text-red-600 mt-0.5">
+                AIが提案しなかった箇所（はっきり見える部分）に個人情報の見落としがないか確認してください
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setNonHighlightedConfirmed(true)}
+            className="flex items-center gap-2 text-sm px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded shadow-sm transition-colors font-medium"
+          >
+            <Check size={16} />
+            <span>確認完了</span>
+          </button>
+        </div>
+      )}
+
+      {/* All Complete Banner */}
+      {allComplete && hasChanges && (
+        <div className="bg-green-50 border-b border-green-200 px-4 py-2 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-green-700">
+            <Sparkles size={16} />
+            <span className="text-sm font-medium">全ての確認が完了しました！</span>
+          </div>
+          <button
+            onClick={onAccept}
+            className="flex items-center gap-1 text-sm px-4 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded shadow-sm transition-colors"
+          >
+            <Check size={14} />
+            <span>変更を適用して保存</span>
+          </button>
+        </div>
+      )}
 
       <div className="flex-1 overflow-hidden relative">
          <DiffEditor
