@@ -69,7 +69,7 @@ pub struct GeminiHandler {
     api_key: String,
 }
 
-const GEMINI_MODEL: &str = "gemini-2.5-flash";
+const GEMINI_MODEL: &str = "gemini-3-flash-preview";
 
 impl GeminiHandler {
     pub fn new() -> Result<Self, String> {
@@ -215,10 +215,14 @@ impl GeminiHandler {
     }
 
     /// Multi-turn chat with history
-    pub async fn chat(&self, history: Vec<Content>) -> Result<String, String> {
+    /// Accepts optional system_instruction for proper system prompting
+    pub async fn chat(&self, history: Vec<Content>, system_prompt: Option<&str>) -> Result<String, String> {
         let request_body = GeminiRequest {
             contents: history,
-            system_instruction: None,
+            system_instruction: system_prompt.map(|s| SystemInstruction {
+                role: None,
+                parts: vec![Part { text: s.to_string() }],
+            }),
             generation_config: GenerationConfig { temperature: 0.7, response_mime_type: "text/plain".to_string() },
         };
 
@@ -234,7 +238,8 @@ impl GeminiHandler {
     }
 
     /// Multi-turn chat with streaming via Tauri events
-    pub async fn chat_streaming(&self, history: Vec<Content>, app: &tauri::AppHandle) -> Result<String, String> {
+    /// Accepts optional system_instruction for proper system prompting
+    pub async fn chat_streaming(&self, history: Vec<Content>, system_prompt: Option<&str>, app: &tauri::AppHandle) -> Result<String, String> {
         use futures_util::StreamExt;
         use tauri::Emitter;
 
@@ -245,7 +250,10 @@ impl GeminiHandler {
 
         let request_body = GeminiRequest {
             contents: history,
-            system_instruction: None,
+            system_instruction: system_prompt.map(|s| SystemInstruction {
+                role: None,
+                parts: vec![Part { text: s.to_string() }],
+            }),
             generation_config: GenerationConfig { temperature: 0.7, response_mime_type: "text/plain".to_string() },
         };
 

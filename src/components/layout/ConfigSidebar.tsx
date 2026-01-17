@@ -80,7 +80,7 @@ export function ConfigSidebar({
   const [inputInfo, setInputInfo] = useState("");
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [taskContext, setTaskContext] = useState("Medical Case Study");
-  const [selectedModel, setSelectedModel] = useState("gemini-2.5-flash");
+  const [selectedModel, setSelectedModel] = useState("gemini-3-flash-preview");
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{ completed: number; total: number; currentFile?: string } | null>(null);
   const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([]);
@@ -99,6 +99,12 @@ export function ConfigSidebar({
     cleaned = cleaned.replace(/\[THOUGHT\]:?[\s\S]*?(?=\n\n|\n[A-Zぁ-んァ-ン一-龯]|$)/gi, '');
     // Remove [thinking]...[/thinking] blocks
     cleaned = cleaned.replace(/\[thinking\][\s\S]*?\[\/thinking\]\s*/gi, '');
+
+    // Aggressive filter: If [/THOUGHT] exists, assume everything before it is internal thought
+    if (cleaned.includes("[/THOUGHT]")) {
+      cleaned = cleaned.replace(/[\s\S]*?\[\/THOUGHT\]\s*/i, '');
+    }
+
     return cleaned.trim();
   };
 

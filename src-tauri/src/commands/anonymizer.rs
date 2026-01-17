@@ -39,7 +39,7 @@ pub async fn chat_with_ai(messages: Vec<ChatMessage>) -> Result<String, String> 
         parts: vec![Part { text: m.content }],
     }).collect();
 
-    handler.chat(history).await
+    handler.chat(history, None).await
 }
 
 use crate::domain::model::{BulkExecutionPlan, WorkflowStep};
@@ -56,43 +56,36 @@ pub struct AgentChatResponse {
 
 /// Check if the user message indicates bulk execution intent
 fn detect_bulk_intent(messages: &[ChatMessage]) -> bool {
-    let bulk_keywords = [
-        "全件", "全て", "すべて", "一括", "バルク", "まとめて",
-        "apply to all", "bulk", "all files", "batch"
-    ];
+    use crate::prompts::BULK_KEYWORDS;
 
     if let Some(last_user_msg) = messages.iter().rev().find(|m| m.role == "user") {
         let lower_content = last_user_msg.content.to_lowercase();
-        return bulk_keywords.iter().any(|kw| lower_content.contains(kw));
+        return BULK_KEYWORDS.iter().any(|kw| lower_content.contains(kw));
     }
     false
 }
 
 /// Check if the user has expressed anonymization purpose
 fn detect_purpose_intent(messages: &[ChatMessage]) -> bool {
-    let purpose_keywords = [
-        "ワクチン", "教材", "教育", "症例報告", "研究", "開発用", "作成用",
-        "学会", "論文", "公開", "データ分析", "計画を立てて", "実行して"
-    ];
+    use crate::prompts::PURPOSE_KEYWORDS;
 
     if let Some(last_user_msg) = messages.iter().rev().find(|m| m.role == "user") {
         let content = &last_user_msg.content;
-        return purpose_keywords.iter().any(|kw| content.contains(kw));
+        return PURPOSE_KEYWORDS.iter().any(|kw| content.contains(kw));
     }
     false
 }
 
 /// Generate contextual suggestions based on conversation state
 fn generate_contextual_suggestions(messages: &[ChatMessage], is_bulk_request: bool, has_purpose: bool) -> Option<Vec<String>> {
+    use crate::prompts;
+
     // Count user messages to determine conversation phase
     let user_msg_count = messages.iter().filter(|m| m.role == "user").count();
 
     // Initial state - no user messages yet or first interaction
     if user_msg_count == 0 {
-        return Some(vec![
-            "匿名化したい".to_string(),
-            "使い方が知りたい".to_string(),
-        ]);
+        return Some(prompts::initial_suggestions());
     }
 
     // Check if user is asking about usage
@@ -101,43 +94,27 @@ fn generate_contextual_suggestions(messages: &[ChatMessage], is_bulk_request: bo
 
         // Usage questions - provide help suggestions
         if content.contains("使い方") || content.contains("ヘルプ") || content.contains("help") {
-            return Some(vec![
-                "ファイルを開きたい".to_string(),
-                "匿名化を開始".to_string(),
-            ]);
+            return Some(prompts::help_suggestions());
         }
 
         // Bulk request acknowledged - provide execution options
         if is_bulk_request {
-            return Some(vec![
-                "実行して".to_string(),
-                "キャンセル".to_string(),
-            ]);
+            return Some(prompts::bulk_options());
         }
 
         // Purpose expressed - ask to create plan
         if has_purpose {
-            return Some(vec![
-                "計画を立てて".to_string(),
-                "もう少し詳しく".to_string(),
-            ]);
+            return Some(prompts::create_plan_options());
         }
 
         // Anonymization intent expressed - ask for purpose
         if content.contains("匿名化") && !content.contains("用") {
-            return Some(vec![
-                "ワクチン開発用".to_string(),
-                "教材作成用".to_string(),
-                "症例報告用".to_string(),
-            ]);
+            return Some(prompts::anonymization_purpose_options());
         }
     }
 
     // Default suggestions for continuing conversation
-    Some(vec![
-        "計画を立てて".to_string(),
-        "詳しく教えて".to_string(),
-    ])
+    Some(prompts::default_suggestions())
 }
 
 /// Enhanced agent chat that supports bulk execution planning
@@ -151,54 +128,28 @@ pub async fn agent_chat(
 
     let is_bulk_request = detect_bulk_intent(&messages);
 
-    // Build editor context if content is provided (simplified - no JSON format request)
-    let editor_context = editor_content
-        .filter(|c| !c.is_empty())
-        .map(|c| format!(
-            r#"
+    // Generate system prompt using the centralized prompts module
+    use crate::prompts;
 
-【現在エディタに表示されているテキスト】
-```
-{}
-```
-
-上記のテキストに含まれる個人情報の種類と対応策を簡潔に説明してください。"#,
-            c
-        ))
-        .unwrap_or_default();
-
-    // Enhanced system prompt for bulk execution
-    let system_context = if is_bulk_request {
-        format!(
-            r#"あなたは医療データ匿名化の専門エージェントです。ユーザーは{}件のファイルの一括処理を希望しています。
-
-【重要】回答は3文以内で簡潔に。長い説明は不要です。
-
-例: 「{}件のファイルを検証後、並列処理します。元データは変更せずanonymized_outputsに出力します。」{}
-"#,
-            file_count, file_count, editor_context
-        )
+    let base_prompt = if is_bulk_request {
+        prompts::bulk_execution_prompt(file_count)
     } else {
-        format!(
-            "あなたは医療データ匿名化の専門エージェントです。【重要】回答は2-3文以内で簡潔に。{}",
-            editor_context
-        )
+        prompts::AGENT_BASE_PROMPT.to_string()
     };
 
+    let system_context = if let Some(content) = editor_content.filter(|c| !c.is_empty()) {
+        prompts::with_editor_context(&base_prompt, &content)
+    } else {
+        base_prompt
+    };
 
-    // Prepend system context to first user message
-    let mut history: Vec<Content> = messages.iter().map(|m| Content {
+    // Create history (no need to manually inject system prompt anymore)
+    let history: Vec<Content> = messages.iter().map(|m| Content {
         role: if m.role == "assistant" { "model".to_string() } else { "user".to_string() },
         parts: vec![Part { text: m.content.clone() }],
     }).collect();
 
-    if !history.is_empty() {
-        if let Some(first) = history.first_mut() {
-            first.parts[0].text = format!("[System]: {}\n\n{}", system_context, first.parts[0].text);
-        }
-    }
-
-    let ai_response = handler.chat(history).await?;
+    let ai_response = handler.chat(history, Some(system_context.as_str())).await?;
 
     // Check if user has expressed anonymization purpose
     let has_purpose = detect_purpose_intent(&messages);
@@ -211,32 +162,10 @@ pub async fn agent_chat(
         let plan = BulkExecutionPlan {
             target_count: effective_count,
             estimated_time_ms: estimated_time,
-            policy_summary: vec![
-                "氏名 → 削除".to_string(),
-                "年齢 → 5歳刻み".to_string(),
-                "日付 → 月単位".to_string(),
-                "住所 → 都道府県のみ".to_string(),
-                "病名 → 一般化".to_string(),
-            ],
+            policy_summary: prompts::default_policy_summary(),
         };
 
-        let steps = vec![
-            WorkflowStep {
-                id: "validation".to_string(),
-                label: "Validation (Dry Run)".to_string(),
-                status: "pending".to_string(),
-            },
-            WorkflowStep {
-                id: "execution".to_string(),
-                label: if effective_count > 1 { "Parallel Execution".to_string() } else { "Execution".to_string() },
-                status: "pending".to_string(),
-            },
-            WorkflowStep {
-                id: "audit".to_string(),
-                label: "Audit Log Generation".to_string(),
-                status: "pending".to_string(),
-            },
-        ];
+        let steps = prompts::default_workflow_steps(effective_count > 1);
 
         (Some(plan), Some(steps))
     } else {
@@ -267,51 +196,26 @@ pub async fn agent_chat_streaming(
     let is_bulk_request = detect_bulk_intent(&messages);
     let has_purpose = detect_purpose_intent(&messages);
 
-    // Build editor context if content is provided (simplified)
-    let editor_context = editor_content
-        .filter(|c| !c.is_empty())
-        .map(|c| format!(
-            r#"
+    // Generate system prompt using the centralized prompts module
+    use crate::prompts;
 
-【現在エディタに表示されているテキスト】
-```
-{}
-```
-
-上記のテキストに含まれる個人情報の種類と対応策を簡潔に説明してください。"#,
-            c
-        ))
-        .unwrap_or_default();
-
-    // Concise system prompt
-    let system_context = if is_bulk_request {
-        format!(
-            r#"あなたは医療データ匿名化の専門エージェントです。ユーザーは{}件のファイルの一括処理を希望しています。
-
-【重要】回答は3文以内で簡潔に。長い説明は不要です。
-
-例: 「{}件のファイルを検証後、並列処理します。元データは変更せずanonymized_outputsに出力します。」{}
-"#,
-            file_count, file_count, editor_context
-        )
+    let base_prompt = if is_bulk_request {
+        prompts::bulk_execution_prompt(file_count)
     } else {
-        format!(
-            "あなたは医療データ匿名化の専門エージェントです。【重要】回答は2-3文以内で簡潔に。{}",
-            editor_context
-        )
+        prompts::AGENT_BASE_PROMPT.to_string()
     };
 
-    // Prepend system context to first user message
-    let mut history: Vec<Content> = messages.iter().map(|m| Content {
+    let system_context = if let Some(content) = editor_content.filter(|c| !c.is_empty()) {
+        prompts::with_editor_context(&base_prompt, &content)
+    } else {
+        base_prompt
+    };
+
+    // Create history (no need to manually inject system prompt anymore)
+    let history: Vec<Content> = messages.iter().map(|m| Content {
         role: if m.role == "assistant" { "model".to_string() } else { "user".to_string() },
         parts: vec![Part { text: m.content.clone() }],
     }).collect();
-
-    if !history.is_empty() {
-        if let Some(first) = history.first_mut() {
-            first.parts[0].text = format!("[System]: {}\n\n{}", system_context, first.parts[0].text);
-        }
-    }
 
     // Emit: Analyzing phase
     use tauri::Emitter;
@@ -321,7 +225,8 @@ pub async fn agent_chat_streaming(
     }));
 
     // Use streaming chat
-    let ai_response = handler.chat_streaming(history, &app).await?;
+    // Use streaming chat with system instruction
+    let ai_response = handler.chat_streaming(history, Some(system_context.as_str()), &app).await?;
 
     // Emit: Complete phase
     let _ = app.emit("thinking-phase", serde_json::json!({
@@ -337,32 +242,10 @@ pub async fn agent_chat_streaming(
         let plan = BulkExecutionPlan {
             target_count: effective_count,
             estimated_time_ms: estimated_time,
-            policy_summary: vec![
-                "氏名 → 削除".to_string(),
-                "年齢 → 5歳刻み".to_string(),
-                "日付 → 月単位".to_string(),
-                "住所 → 都道府県のみ".to_string(),
-                "病名 → 一般化".to_string(),
-            ],
+            policy_summary: prompts::default_policy_summary(),
         };
 
-        let steps = vec![
-            WorkflowStep {
-                id: "validation".to_string(),
-                label: "Validation (Dry Run)".to_string(),
-                status: "pending".to_string(),
-            },
-            WorkflowStep {
-                id: "execution".to_string(),
-                label: if effective_count > 1 { "Parallel Execution".to_string() } else { "Execution".to_string() },
-                status: "pending".to_string(),
-            },
-            WorkflowStep {
-                id: "audit".to_string(),
-                label: "Audit Log Generation".to_string(),
-                status: "pending".to_string(),
-            },
-        ];
+        let steps = prompts::default_workflow_steps(effective_count > 1);
 
         (Some(plan), Some(steps))
     } else {

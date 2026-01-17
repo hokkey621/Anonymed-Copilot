@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod domain;
 pub mod infrastructure;
+pub mod prompts;
 pub mod utils;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
