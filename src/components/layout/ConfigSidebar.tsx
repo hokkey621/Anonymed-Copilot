@@ -86,6 +86,7 @@ export function ConfigSidebar({
   const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([]);
   const [isBulkExecuting, setIsBulkExecuting] = useState(false);
   const [activeBulkPlan, setActiveBulkPlan] = useState<BulkExecutionPlan | null>(null);
+  const [streamingContent, setStreamingContent] = useState<string>("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Listen for agent progress
@@ -107,6 +108,14 @@ export function ConfigSidebar({
       }
     });
     return () => { unlisten.then(f => f()); };
+  }, []);
+
+  // Listen for chat streaming
+  useEffect(() => {
+    const unlistenStream = listen<{ chunk: string; full: string }>("chat-stream", (event) => {
+      setStreamingContent(event.payload.full);
+    });
+    return () => { unlistenStream.then(f => f()); };
   }, []);
 
   // Auto-scroll to bottom
@@ -149,7 +158,10 @@ export function ConfigSidebar({
     }
 
     try {
-      const response = await invoke<AgentChatResponse>("agent_chat", {
+      // Start with empty streaming content
+      setStreamingContent("");
+
+      const response = await invoke<AgentChatResponse>("agent_chat_streaming", {
         messages: apiMessages,
         fileCount: fileCount,
         editorContent: needsFileContent ? (currentContent || null) : null
@@ -271,7 +283,8 @@ export function ConfigSidebar({
                 }
 
                 try {
-                  const response = await invoke<AgentChatResponse>("agent_chat", {
+                  setStreamingContent("");
+                  const response = await invoke<AgentChatResponse>("agent_chat_streaming", {
                     messages: apiMessages,
                     fileCount: fileCount,
                     editorContent: needsFileContent ? (currentContent || null) : null
@@ -302,9 +315,19 @@ export function ConfigSidebar({
             />
           )}
           {isChatLoading && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              考え中...
+            <div className="text-sm">
+              <div className="text-xs font-medium mb-1 text-muted-foreground">Agent</div>
+              <div className="rounded-md px-3 py-2 bg-muted/50">
+                {streamingContent ? (
+                  <p className="whitespace-pre-wrap break-words">{streamingContent}</p>
+                ) : (
+                  <div className="flex items-center gap-1">
+                    <span className="inline-block w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <span className="inline-block w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <span className="inline-block w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>

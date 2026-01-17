@@ -13,6 +13,7 @@ pub fn run() {
             commands::anonymizer::apply_plan,
             commands::anonymizer::chat_with_ai,
             commands::anonymizer::agent_chat,
+            commands::anonymizer::agent_chat_streaming,
             commands::audit::generate_report,
             commands::audit::create_audit_report,
             commands::audit::generate_public_notice,
