@@ -73,7 +73,7 @@ export function ConfigSidebar({
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "assistant",
-      content: "どのような匿名化が必要ですか？",
+      content: "こんにちは、Anonymed Copilotです。まず、作業するファイルかフォルダを開いてください。次に、チャットで質問するか質問例をタップしてください。",
       suggestions: ["匿名化したい", "使い方が知りたい"]
     }
   ]);
