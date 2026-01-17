@@ -90,6 +90,18 @@ export function ConfigSidebar({
   const [thinkingPhase, setThinkingPhase] = useState<string>("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Helper function to filter out thought tags from AI responses
+  const filterThoughtTags = (text: string): string => {
+    let cleaned = text;
+    // Remove [System]: ... patterns (LLM sometimes echoes system prompt)
+    cleaned = cleaned.replace(/\[System\]:?[\s\S]*?(?=\n\n|\n[ぁ-んァ-ン一-龯]|$)/gi, '');
+    // Remove [THOUGHT]: ... patterns
+    cleaned = cleaned.replace(/\[THOUGHT\]:?[\s\S]*?(?=\n\n|\n[A-Zぁ-んァ-ン一-龯]|$)/gi, '');
+    // Remove [thinking]...[/thinking] blocks
+    cleaned = cleaned.replace(/\[thinking\][\s\S]*?\[\/thinking\]\s*/gi, '');
+    return cleaned.trim();
+  };
+
   // Listen for agent progress
   useEffect(() => {
     const unlisten = listen<AgentProgressEvent>("agent-progress", () => {});
@@ -186,7 +198,7 @@ export function ConfigSidebar({
 
       const newMessage: Message = {
         role: "assistant",
-        content: response.message,
+        content: filterThoughtTags(response.message),
         bulkPlan: response.bulk_plan || undefined,
         workflowSteps: response.workflow_steps || undefined,
         suggestions: response.suggestions || undefined
@@ -309,7 +321,7 @@ export function ConfigSidebar({
 
                   const newMessage: Message = {
                     role: "assistant",
-                    content: response.message,
+                    content: filterThoughtTags(response.message),
                     bulkPlan: response.bulk_plan || undefined,
                     workflowSteps: response.workflow_steps || undefined,
                     suggestions: response.suggestions || undefined
