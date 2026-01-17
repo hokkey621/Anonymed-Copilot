@@ -187,42 +187,43 @@ JSONフォーマット:
 
     let ai_response = handler.chat(history).await?;
 
-    // Always generate execution plan for visual feedback (even for single file)
-    // Use at least 1 file count if none provided
-    let effective_count = if file_count > 0 { file_count } else { 1 };
+    // Only generate execution plan when user explicitly requests bulk execution
+    let (bulk_plan, workflow_steps) = if is_bulk_request {
+        let effective_count = if file_count > 0 { file_count } else { 1 };
+        let estimated_time = (effective_count as u64) * 50;
 
-    // Estimate ~50ms per file for rule-based replacement (no API calls)
-    let estimated_time = (effective_count as u64) * 50;
+        let plan = BulkExecutionPlan {
+            target_count: effective_count,
+            estimated_time_ms: estimated_time,
+            policy_summary: vec![
+                "Apply approved replacement rules".to_string(),
+                "Output to separate directory".to_string(),
+                "Generate SHA-256 hashes for audit".to_string(),
+            ],
+        };
 
-    let plan = BulkExecutionPlan {
-        target_count: effective_count,
-        estimated_time_ms: estimated_time,
-        policy_summary: vec![
-            "Apply approved replacement rules".to_string(),
-            "Output to separate directory".to_string(),
-            "Generate SHA-256 hashes for audit".to_string(),
-        ],
+        let steps = vec![
+            WorkflowStep {
+                id: "validation".to_string(),
+                label: "Validation (Dry Run)".to_string(),
+                status: "pending".to_string(),
+            },
+            WorkflowStep {
+                id: "execution".to_string(),
+                label: if effective_count > 1 { "Parallel Execution".to_string() } else { "Execution".to_string() },
+                status: "pending".to_string(),
+            },
+            WorkflowStep {
+                id: "audit".to_string(),
+                label: "Audit Log Generation".to_string(),
+                status: "pending".to_string(),
+            },
+        ];
+
+        (Some(plan), Some(steps))
+    } else {
+        (None, None)
     };
-
-    let steps = vec![
-        WorkflowStep {
-            id: "validation".to_string(),
-            label: "Validation (Dry Run)".to_string(),
-            status: "pending".to_string(),
-        },
-        WorkflowStep {
-            id: "execution".to_string(),
-            label: if effective_count > 1 { "Parallel Execution".to_string() } else { "Execution".to_string() },
-            status: "pending".to_string(),
-        },
-        WorkflowStep {
-            id: "audit".to_string(),
-            label: "Audit Log Generation".to_string(),
-            status: "pending".to_string(),
-        },
-    ];
-
-    let (bulk_plan, workflow_steps) = (Some(plan), Some(steps));
 
     // Generate contextual suggestions based on conversation state
     let suggestions = generate_contextual_suggestions(&messages, is_bulk_request);
