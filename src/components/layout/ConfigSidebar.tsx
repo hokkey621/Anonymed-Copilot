@@ -124,10 +124,17 @@ export function ConfigSidebar({
     setInputInfo("");
     setIsChatLoading(true);
 
+    // Check if this message requires file content (only for plan creation/execution)
+    const needsContentKeywords = [
+      "計画を立てて", "実行して", "一括", "全件", "全て", "すべて"
+    ];
+    const needsFileContent = needsContentKeywords.some(kw => inputInfo.includes(kw));
+
     const newHistory = [...messages, userMsg];
     let apiMessages = newHistory.map(m => ({ role: m.role, content: m.content }));
 
-    if (currentContent && currentContent.trim().length > 0) {
+    // Only include file content when needed for anonymization plan
+    if (needsFileContent && currentContent && currentContent.trim().length > 0) {
       if (messages.length === 1) {
         apiMessages = [
           messages[0],
@@ -145,7 +152,7 @@ export function ConfigSidebar({
       const response = await invoke<AgentChatResponse>("agent_chat", {
         messages: apiMessages,
         fileCount: fileCount,
-        editorContent: currentContent || null
+        editorContent: needsFileContent ? (currentContent || null) : null
       });
 
       const newMessage: Message = {
@@ -246,10 +253,17 @@ export function ConfigSidebar({
                 setMessages(prev => [...prev, userMsg]);
                 setIsChatLoading(true);
 
+                // Check if this suggestion requires file content (only for plan creation/execution)
+                const needsContentKeywords = [
+                  "計画を立てて", "実行して", "一括", "全件", "全て", "すべて"
+                ];
+                const needsFileContent = needsContentKeywords.some(kw => text.includes(kw));
+
                 const newHistory = [...messages, userMsg];
                 let apiMessages = newHistory.map(m => ({ role: m.role, content: m.content }));
 
-                if (currentContent && currentContent.trim().length > 0) {
+                // Only include file content when needed for anonymization plan
+                if (needsFileContent && currentContent && currentContent.trim().length > 0) {
                   const firstUserIndex = apiMessages.findIndex(m => m.role === "user");
                   if (firstUserIndex !== -1) {
                     apiMessages[firstUserIndex].content = `[Document Context]:\n${currentContent}\n\n[User]: ${apiMessages[firstUserIndex].content}`;
@@ -260,7 +274,7 @@ export function ConfigSidebar({
                   const response = await invoke<AgentChatResponse>("agent_chat", {
                     messages: apiMessages,
                     fileCount: fileCount,
-                    editorContent: currentContent || null
+                    editorContent: needsFileContent ? (currentContent || null) : null
                   });
 
                   const newMessage: Message = {
