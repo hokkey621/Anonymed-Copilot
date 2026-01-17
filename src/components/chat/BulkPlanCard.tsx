@@ -64,7 +64,10 @@ function StepIcon({ status }: { status: string }) {
 
 export function BulkPlanCard({ plan, workflowSteps, onCommit, isExecuting, progress }: BulkPlanCardProps) {
   const progressPercent = progress ? Math.round((progress.completed / progress.total) * 100) : 0;
-  const transformations = plan.key_transformations || DEFAULT_TRANSFORMATIONS;
+  // Use policy_summary from backend (category → method format) or fallback to key_transformations
+  const transformations = plan.key_transformations ||
+    plan.policy_summary?.map(rule => ({ rule, enabled: true })) ||
+    DEFAULT_TRANSFORMATIONS;
   const estimatedSeconds = Math.ceil(plan.estimated_time_ms / 1000);
 
   return (
