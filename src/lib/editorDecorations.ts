@@ -109,7 +109,7 @@ export function createApproveWidget(
   blockId: number,
   endLineNumber: number,
   editor: monaco.editor.IStandaloneCodeEditor,
-  onToggleApprove: (blockId: number) => void
+  onToggleApprove: (blockId: number, event?: MouseEvent) => void
 ): monaco.editor.IContentWidget {
   const domNode = document.createElement("button");
   domNode.className = "approve-button-widget";
@@ -122,7 +122,7 @@ export function createApproveWidget(
   `;
   domNode.onclick = (e) => {
     e.stopPropagation();
-    onToggleApprove(blockId);
+    onToggleApprove(blockId, e as MouseEvent);
   };
 
   // Get the maximum column for the end line to position at the right

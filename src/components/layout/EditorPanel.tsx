@@ -1,6 +1,6 @@
 import { DiffEditor } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
-import { Check, Clipboard, Eye, EyeOff, FileText, Sparkles, AlertTriangle, Search, ChevronDown, ChevronUp } from "lucide-react";
+import { Check, Clipboard, Eye, EyeOff, FileText, Sparkles, AlertTriangle, Search, ChevronDown, ChevronUp, PartyPopper, X } from "lucide-react";
 import { useState, useRef, useCallback, useEffect } from "react";
 import {
   DiffBlock,
@@ -9,6 +9,7 @@ import {
   updateWidgetToApproved,
   updateWidgetToUnapproved,
 } from "@/lib/editorDecorations";
+import { useApprovalAnimation } from "@/lib/useApprovalAnimation";
 
 interface EditorPanelProps {
   original?: string;
@@ -34,6 +35,13 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
   const modifiedEditorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const decorationIdsRef = useRef<string[]>([]);
   const widgetsRef = useRef<Map<number, monaco.editor.IContentWidget>>(new Map());
+
+  // Completion celebration state
+  const [showCompletionCelebration, setShowCompletionCelebration] = useState(false);
+  const celebrationTriggeredRef = useRef(false);
+
+  // Animation hook
+  const { triggerApprovalAnimation, triggerCompletionCelebration } = useApprovalAnimation();
 
   const handleCopy = () => {
        navigator.clipboard.writeText(modified);
@@ -81,8 +89,8 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
     }
   }, [diffBlocks, approvedBlockIds]);
 
-  // Handle block approval toggle
-  const handleToggleApproveBlock = useCallback((blockId: number) => {
+  // Handle block approval toggle with animations
+  const handleToggleApproveBlock = useCallback((blockId: number, event?: MouseEvent) => {
     setApprovedBlockIds(prev => {
       const newSet = new Set(prev);
       const isCurrentlyApproved = newSet.has(blockId);
@@ -98,20 +106,33 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
           }
         }
       } else {
-        // Approve
+        // Approve with animation
         newSet.add(blockId);
         const widget = widgetsRef.current.get(blockId);
         if (widget) {
           const domNode = widget.getDomNode();
           if (domNode) {
+            // Add pulse animation class
+            domNode.classList.add('approving');
+            setTimeout(() => domNode.classList.remove('approving'), 350);
+
             updateWidgetToApproved(domNode);
+
+            // Trigger particle animation at button position
+            if (event) {
+              triggerApprovalAnimation(event.clientX, event.clientY);
+            } else {
+              // Fallback: use button position
+              const rect = domNode.getBoundingClientRect();
+              triggerApprovalAnimation(rect.left + rect.width / 2, rect.top + rect.height / 2);
+            }
           }
         }
       }
 
       return newSet;
     });
-  }, []);
+  }, [triggerApprovalAnimation]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -201,11 +222,22 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
     }
   }, [focusModeEnabled]);
 
+  // Trigger celebration when all complete
+  useEffect(() => {
+    if (allComplete && !celebrationTriggeredRef.current && hasChanges) {
+      celebrationTriggeredRef.current = true;
+      setShowCompletionCelebration(true);
+      triggerCompletionCelebration();
+    }
+  }, [allComplete, hasChanges, triggerCompletionCelebration]);
+
   // Reset state when content changes
   useEffect(() => {
     setApprovedBlockIds(new Set());
     setDiffBlocks([]);
     setNonHighlightedConfirmed(false);
+    setShowCompletionCelebration(false);
+    celebrationTriggeredRef.current = false;
 
     // Clear widgets
     if (modifiedEditorRef.current) {
@@ -263,6 +295,7 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
   const nextUnapproved = getNextUnapprovedBlock();
 
   return (
+    <>
     <div className="h-full flex flex-col bg-background">
       {/* Editor Header */}
       <div className="h-9 border-b flex items-center justify-between px-4 bg-muted/20 shrink-0">
@@ -366,12 +399,12 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
           </div>
       </div>
 
-      {/* Progress Bar */}
+      {/* Enhanced Progress Bar */}
       {hasChanges && totalBlocks > 0 && (
-        <div className="h-1 bg-slate-200 shrink-0">
+        <div className="progress-bar-container shrink-0">
           <div
-            className={`h-full transition-all duration-300 ${
-              allComplete ? "bg-green-500" : isNPlusOneStep ? "bg-red-400" : "bg-amber-400"
+            className={`progress-bar-fill ${
+              allComplete ? "complete" : isNPlusOneStep ? "n-plus-one" : "in-progress"
             }`}
             style={{ width: `${progressPercent}%` }}
           />
@@ -441,5 +474,36 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
          />
       </div>
     </div>
+
+      {/* Completion Celebration Overlay */}
+      {showCompletionCelebration && (
+        <div className="completion-overlay">
+          <div className="completion-icon">
+            <PartyPopper size={40} />
+          </div>
+          <h2 className="completion-title">確認完了！</h2>
+          <p className="completion-subtitle">全ての変更箇所の確認が完了しました</p>
+          <div className="completion-actions">
+            <button
+              className="completion-button-primary"
+              onClick={() => {
+                setShowCompletionCelebration(false);
+                onAccept();
+              }}
+            >
+              <Check size={20} />
+              変更を適用して保存
+            </button>
+            <button
+              className="completion-button-secondary"
+              onClick={() => setShowCompletionCelebration(false)}
+            >
+              <X size={20} />
+              閉じる
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
