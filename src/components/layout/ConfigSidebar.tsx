@@ -53,6 +53,7 @@ interface ConfigSidebarProps {
   currentDirPath?: string;
   currentPlan?: any;
   currentFileName?: string;
+  selectedFilePaths?: string[];
 }
 
 const MODEL_OPTIONS = [
@@ -68,7 +69,8 @@ export function ConfigSidebar({
   fileCount = 0,
   currentDirPath = "",
   currentPlan,
-  currentFileName = ""
+  currentFileName = "",
+  selectedFilePaths = []
 }: ConfigSidebarProps) {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -244,7 +246,8 @@ export function ConfigSidebar({
         await invoke("bulk_execute", {
           dirPath: currentDirPath,
           plan: currentPlan,
-          taskName: taskContext.replace(/\s+/g, '_')
+          taskName: taskContext.replace(/\s+/g, '_'),
+          targetFiles: selectedFilePaths.length > 0 ? selectedFilePaths : null
         });
         setMessages(prev => [...prev, {
           role: "assistant",

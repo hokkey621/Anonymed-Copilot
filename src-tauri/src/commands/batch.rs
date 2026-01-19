@@ -115,6 +115,7 @@ pub async fn bulk_execute(
     dir_path: String,
     plan: AnonPlan,
     task_name: String,
+    target_files: Option<Vec<String>>,
 ) -> Result<BatchResult, String> {
     let path = Path::new(&dir_path);
     if !path.is_dir() {
@@ -136,8 +137,8 @@ pub async fn bulk_execute(
         step_message: "3省2ガイドラインに基づき、全ファイルの読み込み可否を検証中...".to_string(),
     });
 
-    // Collect files
-    let entries: Vec<_> = fs::read_dir(path)
+    // Collect all files first
+    let all_entries: Vec<_> = fs::read_dir(path)
         .map_err(|e| e.to_string())?
         .filter_map(|res| res.ok())
         .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
@@ -148,6 +149,16 @@ pub async fn bulk_execute(
                 .unwrap_or(false)
         })
         .collect();
+
+    // Filter by target_files if specified
+    let entries: Vec<_> = if let Some(ref targets) = target_files {
+        let target_set: std::collections::HashSet<_> = targets.iter().collect();
+        all_entries.into_iter()
+            .filter(|e| target_set.contains(&e.path().to_string_lossy().to_string()))
+            .collect()
+    } else {
+        all_entries
+    };
 
     let total = entries.len();
 

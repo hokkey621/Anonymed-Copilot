@@ -47,6 +47,7 @@ export function MainLayout() {
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
   const [currentFolder, setCurrentFolder] = useState<{ path: string; name: string } | null>(null);
   const [folderFiles, setFolderFiles] = useState<FolderFileEntry[]>([]);
+  const [selectedFilesForBulk, setSelectedFilesForBulk] = useState<Set<string>>(new Set());
 
   const activeFile = openedFiles.find(f => f.path === activeFilePath) || null;
 
@@ -92,6 +93,9 @@ export function MainLayout() {
       if (result) {
         setCurrentFolder({ path: result.folder_path, name: result.folder_name });
         setFolderFiles(result.files);
+        // Select all non-directory files by default
+        const allFilePaths = result.files.filter(f => !f.is_dir).map(f => f.path);
+        setSelectedFilesForBulk(new Set(allFilePaths));
         // Reset opened files when opening new folder
         setOpenedFiles([]);
         setActiveFilePath(null);
@@ -286,6 +290,9 @@ export function MainLayout() {
               folderFiles={folderFiles}
               onFileClick={handleOpenFileFromTree}
               activeFilePath={activeFilePath || undefined}
+              selectionMode={!!currentFolder}
+              selectedFiles={selectedFilesForBulk}
+              onSelectionChange={setSelectedFilesForBulk}
             />
 
           </div>
@@ -328,6 +335,7 @@ export function MainLayout() {
                 fileCount={folderFiles.filter(f => !f.is_dir).length}
                 currentFileName={activeFile?.filename}
                 currentDirPath={currentFolder?.path}
+                selectedFilePaths={Array.from(selectedFilesForBulk)}
              />
           </div>
         </div>
