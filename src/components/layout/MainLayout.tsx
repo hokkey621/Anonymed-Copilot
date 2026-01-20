@@ -49,6 +49,12 @@ export function MainLayout() {
   const [folderFiles, setFolderFiles] = useState<FolderFileEntry[]>([]);
   const [selectedFilesForBulk, setSelectedFilesForBulk] = useState<Set<string>>(new Set());
 
+  // Bulk review mode state
+  const [bulkReviewMode, setBulkReviewMode] = useState(false);
+  const [bulkReviewQueue, setBulkReviewQueue] = useState<{path: string, fileName: string, original: string, anonymized: string}[]>([]);
+  const [bulkReviewIndex, setBulkReviewIndex] = useState(0);
+  const [bulkApprovedResults, setBulkApprovedResults] = useState<{fileName: string, content: string}[]>([]);
+
   const activeFile = openedFiles.find(f => f.path === activeFilePath) || null;
 
   // Open file from dialog
@@ -263,6 +269,125 @@ export function MainLayout() {
       }
   };
 
+  // === Bulk Review Mode Handlers ===
+
+  // Start bulk review: load all files with plan applied
+  const handleStartBulkReview = async (plan: AnonPlan) => {
+    if (selectedFilesForBulk.size === 0) return;
+
+    setIsProcessing(true);
+    try {
+      const targetFiles = Array.from(selectedFilesForBulk);
+      const previews = await invoke<{file_path: string, file_name: string, original_content: string, anonymized_content: string}[]>(
+        "bulk_preview",
+        { targetFiles, plan }
+      );
+
+      // Convert to queue format
+      const queue = previews.map(p => ({
+        path: p.file_path,
+        fileName: p.file_name,
+        original: p.original_content,
+        anonymized: p.anonymized_content,
+      }));
+
+      setBulkReviewQueue(queue);
+      setBulkReviewIndex(0);
+      setBulkApprovedResults([]);
+      setBulkReviewMode(true);
+
+      // Load first file into diff view
+      if (queue.length > 0) {
+        setOriginalContent(queue[0].original);
+        setAnonymizedContent(queue[0].anonymized);
+        setCurrentPlan(plan);
+      }
+    } catch (e) {
+      console.error("Bulk preview failed:", e);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Approve current file and move to next
+  const handleBulkApprove = () => {
+    if (!bulkReviewMode || bulkReviewQueue.length === 0) return;
+
+    const current = bulkReviewQueue[bulkReviewIndex];
+    setBulkApprovedResults(prev => [...prev, { fileName: current.fileName, content: anonymizedContent }]);
+
+    moveToNextBulkFile();
+  };
+
+  // Skip current file and move to next
+  const handleBulkSkip = () => {
+    if (!bulkReviewMode) return;
+    moveToNextBulkFile();
+  };
+
+  // Move to next file in queue or finish
+  const moveToNextBulkFile = () => {
+    const nextIndex = bulkReviewIndex + 1;
+    if (nextIndex >= bulkReviewQueue.length) {
+      // All files processed - trigger save dialog
+      handleBulkComplete();
+    } else {
+      setBulkReviewIndex(nextIndex);
+      const next = bulkReviewQueue[nextIndex];
+      setOriginalContent(next.original);
+      setAnonymizedContent(next.anonymized);
+    }
+  };
+
+  // Complete bulk review: show save dialog and save
+  const handleBulkComplete = async () => {
+    if (bulkApprovedResults.length === 0) {
+      // No files approved, just exit review mode
+      setBulkReviewMode(false);
+      setOriginalContent("");
+      setAnonymizedContent("");
+      return;
+    }
+
+    try {
+      // Use Tauri dialog to select output folder
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selectedPath = await open({
+        directory: true,
+        title: "保存先フォルダを選択",
+        defaultPath: currentFolder?.path,
+      });
+
+      if (selectedPath && typeof selectedPath === "string") {
+        await invoke("bulk_save", {
+          outputDir: selectedPath,
+          items: bulkApprovedResults,
+        });
+        console.log(`Saved ${bulkApprovedResults.length} files to ${selectedPath}`);
+      }
+    } catch (e) {
+      console.error("Bulk save failed:", e);
+    } finally {
+      // Exit review mode
+      setBulkReviewMode(false);
+      setBulkReviewQueue([]);
+      setBulkReviewIndex(0);
+      setBulkApprovedResults([]);
+      setOriginalContent("");
+      setAnonymizedContent("");
+    }
+  };
+
+  // Cancel bulk review
+  const handleBulkCancel = () => {
+    setBulkReviewMode(false);
+    setBulkReviewQueue([]);
+    setBulkReviewIndex(0);
+    setBulkApprovedResults([]);
+    setOriginalContent("");
+    setAnonymizedContent("");
+  };
+
   const hasUnsavedChanges = originalContent !== anonymizedContent;
 
   return (
@@ -336,6 +461,12 @@ export function MainLayout() {
                 currentFileName={activeFile?.filename}
                 currentDirPath={currentFolder?.path}
                 selectedFilePaths={Array.from(selectedFilesForBulk)}
+                onStartBulkReview={handleStartBulkReview}
+                bulkReviewMode={bulkReviewMode}
+                bulkReviewProgress={bulkReviewMode ? { current: bulkReviewIndex + 1, total: bulkReviewQueue.length, fileName: bulkReviewQueue[bulkReviewIndex]?.fileName || "" } : undefined}
+                onBulkApprove={handleBulkApprove}
+                onBulkSkip={handleBulkSkip}
+                onBulkCancel={handleBulkCancel}
              />
           </div>
         </div>

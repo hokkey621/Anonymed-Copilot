@@ -54,6 +54,13 @@ interface ConfigSidebarProps {
   currentPlan?: any;
   currentFileName?: string;
   selectedFilePaths?: string[];
+  // Bulk review mode props
+  onStartBulkReview?: (plan: any) => void;
+  bulkReviewMode?: boolean;
+  bulkReviewProgress?: { current: number; total: number; fileName: string };
+  onBulkApprove?: () => void;
+  onBulkSkip?: () => void;
+  onBulkCancel?: () => void;
 }
 
 const MODEL_OPTIONS = [
@@ -70,7 +77,13 @@ export function ConfigSidebar({
   currentDirPath = "",
   currentPlan,
   currentFileName = "",
-  selectedFilePaths = []
+  selectedFilePaths = [],
+  onStartBulkReview,
+  bulkReviewMode = false,
+  bulkReviewProgress,
+  onBulkApprove,
+  onBulkSkip,
+  onBulkCancel,
 }: ConfigSidebarProps) {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -237,11 +250,26 @@ export function ConfigSidebar({
   const handleBulkCommit = async () => {
     console.log("handleBulkCommit called", { currentDirPath, currentPlan, currentContent });
 
+    // If in bulk review mode, this should not be called directly
+    // Use onStartBulkReview instead for sequential review flow
+    if (currentDirPath && currentPlan && onStartBulkReview && selectedFilePaths.length > 0) {
+      // Start sequential review mode
+      onStartBulkReview(currentPlan);
+      setActiveBulkPlan(null);
+      return;
+    }
+
+    // Single file mode - use the original anonymization flow
+    if (!currentDirPath && currentContent) {
+      onRunAnonymization(taskContext);
+      return;
+    }
+
+    // Fallback: Old bulk execute (direct save without review)
     setIsBulkExecuting(true);
     setBulkProgress({ completed: 0, total: activeBulkPlan?.target_count || 1 });
 
     try {
-      // If folder is available, use bulk execute
       if (currentDirPath && currentPlan) {
         await invoke("bulk_execute", {
           dirPath: currentDirPath,
@@ -253,10 +281,6 @@ export function ConfigSidebar({
           role: "assistant",
           content: "✅ 完了しました。`anonymized_outputs` フォルダに保存されました。"
         }]);
-      } else {
-        // Single file mode - use the original anonymization flow (analyze + apply with diff)
-        // No message needed - user will see the diff in the editor
-        onRunAnonymization(taskContext);
       }
     } catch (e) {
       setMessages(prev => [...prev, { role: "assistant", content: `❌ エラー: ${e}` }]);
@@ -373,6 +397,50 @@ export function ConfigSidebar({
           )}
         </div>
       </ScrollArea>
+
+      {/* Bulk Review Controls - shown when in review mode */}
+      {bulkReviewMode && bulkReviewProgress && (
+        <div className="border-t p-3 space-y-2 bg-blue-50 dark:bg-blue-900/20">
+          <div className="flex items-center justify-between text-sm">
+            <span className="font-medium">
+              ファイル {bulkReviewProgress.current}/{bulkReviewProgress.total}
+            </span>
+            <span className="text-muted-foreground truncate max-w-[150px]">
+              {bulkReviewProgress.fileName}
+            </span>
+          </div>
+          <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+            <div
+              className="h-full bg-blue-500 transition-all"
+              style={{ width: `${(bulkReviewProgress.current / bulkReviewProgress.total) * 100}%` }}
+            />
+          </div>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onBulkSkip}
+              className="flex-1"
+            >
+              スキップ
+            </Button>
+            <Button
+              size="sm"
+              variant="default"
+              onClick={onBulkApprove}
+              className="flex-1"
+            >
+              承認して次へ
+            </Button>
+          </div>
+          <button
+            onClick={onBulkCancel}
+            className="w-full text-xs text-muted-foreground hover:text-foreground transition-colors py-1"
+          >
+            レビューを中断
+          </button>
+        </div>
+      )}
 
       {/* Footer: File indicator + Input */}
       <div className="border-t p-3 space-y-2">
