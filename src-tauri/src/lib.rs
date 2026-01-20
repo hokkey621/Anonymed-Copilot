@@ -21,6 +21,8 @@ pub fn run() {
             commands::batch::process_bulk,
             commands::batch::bulk_execute,
             commands::batch::bulk_dry_run,
+            commands::batch::bulk_preview,
+            commands::batch::bulk_save,
             commands::file::open_file,
             commands::file::open_folder,
             commands::file::read_file_content,

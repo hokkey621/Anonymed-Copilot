@@ -115,6 +115,7 @@ pub async fn bulk_execute(
     dir_path: String,
     plan: AnonPlan,
     task_name: String,
+    target_files: Option<Vec<String>>,
 ) -> Result<BatchResult, String> {
     let path = Path::new(&dir_path);
     if !path.is_dir() {
@@ -136,8 +137,8 @@ pub async fn bulk_execute(
         step_message: "3省2ガイドラインに基づき、全ファイルの読み込み可否を検証中...".to_string(),
     });
 
-    // Collect files
-    let entries: Vec<_> = fs::read_dir(path)
+    // Collect all files first
+    let all_entries: Vec<_> = fs::read_dir(path)
         .map_err(|e| e.to_string())?
         .filter_map(|res| res.ok())
         .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
@@ -148,6 +149,16 @@ pub async fn bulk_execute(
                 .unwrap_or(false)
         })
         .collect();
+
+    // Filter by target_files if specified
+    let entries: Vec<_> = if let Some(ref targets) = target_files {
+        let target_set: std::collections::HashSet<_> = targets.iter().collect();
+        all_entries.into_iter()
+            .filter(|e| target_set.contains(&e.path().to_string_lossy().to_string()))
+            .collect()
+    } else {
+        all_entries
+    };
 
     let total = entries.len();
 
@@ -353,6 +364,109 @@ pub async fn process_bulk(
 
     Ok(BatchResult {
         processed_count: logs.len(),
+        error_count,
+        logs,
+    })
+}
+
+/// Item for bulk preview (file content before and after anonymization)
+#[derive(Clone, Serialize, serde::Deserialize)]
+pub struct BulkPreviewItem {
+    pub file_path: String,
+    pub file_name: String,
+    pub original_content: String,
+    pub anonymized_content: String,
+}
+
+/// Preview files without saving - used for sequential review mode
+#[tauri::command]
+pub async fn bulk_preview(
+    target_files: Vec<String>,
+    plan: AnonPlan,
+) -> Result<Vec<BulkPreviewItem>, String> {
+    let mut results = Vec::new();
+
+    for file_path_str in target_files {
+        let file_path = Path::new(&file_path_str);
+        let file_name = file_path.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        // Read original content
+        let original_content = match read_file_with_encoding(file_path) {
+            Ok(c) => c,
+            Err(e) => {
+                return Err(format!("Failed to read {}: {}", file_name, e));
+            }
+        };
+
+        // Apply plan (no API call, rule-based)
+        let anonymized_content = match apply_plan_to_text(&original_content, &plan, false) {
+            Ok(p) => p,
+            Err(e) => {
+                return Err(format!("Failed to process {}: {}", file_name, e));
+            }
+        };
+
+        results.push(BulkPreviewItem {
+            file_path: file_path_str,
+            file_name,
+            original_content,
+            anonymized_content,
+        });
+    }
+
+    Ok(results)
+}
+
+/// Item for bulk save
+#[derive(Clone, Serialize, serde::Deserialize)]
+pub struct BulkSaveItem {
+    pub file_name: String,
+    pub content: String,
+}
+
+/// Save approved files to output directory
+#[tauri::command]
+pub async fn bulk_save(
+    output_dir: String,
+    items: Vec<BulkSaveItem>,
+) -> Result<BatchResult, String> {
+    let output_path = Path::new(&output_dir);
+
+    // Create output directory if it doesn't exist
+    fs::create_dir_all(output_path)
+        .map_err(|e| format!("Failed to create output directory: {}", e))?;
+
+    let mut processed_count = 0;
+    let mut error_count = 0;
+    let mut logs = Vec::new();
+
+    for item in items {
+        let file_path = output_path.join(&item.file_name);
+
+        match fs::write(&file_path, &item.content) {
+            Ok(_) => {
+                processed_count += 1;
+                logs.push(AuditLog {
+                    task_context: "Bulk Review Save".to_string(),
+                    applied_rules: vec![],
+                    user_overrides: vec![],
+                    privacy_score: 0.9,
+                    data_hash: sha256_hash(&item.content),
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                    signature: None,
+                });
+            }
+            Err(e) => {
+                println!("Failed to save {}: {}", item.file_name, e);
+                error_count += 1;
+            }
+        }
+    }
+
+    Ok(BatchResult {
+        processed_count,
         error_count,
         logs,
     })

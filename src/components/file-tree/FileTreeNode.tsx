@@ -23,6 +23,10 @@ interface FileTreeNodeProps {
   onFileClick: (path: string, filename: string) => void;
   onCloseFile?: (path: string) => void;
   renderChildren: (file: FileEntry, depth: number) => React.ReactNode;
+  // Selection mode props
+  selectionMode?: boolean;
+  isSelected?: boolean;
+  onSelectChange?: (path: string, selected: boolean) => void;
 }
 
 /**
@@ -44,6 +48,9 @@ export function FileTreeNode({
   onFileClick,
   onCloseFile,
   renderChildren,
+  selectionMode = false,
+  isSelected = false,
+  onSelectChange,
 }: FileTreeNodeProps) {
   const baseIndent = 16; // px per depth level
 
@@ -103,6 +110,20 @@ export function FileTreeNode({
         }
       }}
     >
+      {/* Selection Checkbox */}
+      {selectionMode && onSelectChange && (
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={(e) => {
+            e.stopPropagation();
+            onSelectChange(file.path, e.target.checked);
+          }}
+          onClick={(e) => e.stopPropagation()}
+          className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 mr-2 shrink-0 cursor-pointer"
+          aria-label={`${file.filename}を選択`}
+        />
+      )}
       <span
         className="w-5 text-center shrink-0 text-slate-400 dark:text-slate-500"
         aria-hidden="true"

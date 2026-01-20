@@ -47,6 +47,15 @@ export function MainLayout() {
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
   const [currentFolder, setCurrentFolder] = useState<{ path: string; name: string } | null>(null);
   const [folderFiles, setFolderFiles] = useState<FolderFileEntry[]>([]);
+  const [selectedFilesForBulk, setSelectedFilesForBulk] = useState<Set<string>>(new Set());
+
+  // Bulk review mode state
+  const [bulkReviewMode, setBulkReviewMode] = useState(false);
+  const [bulkReviewQueue, setBulkReviewQueue] = useState<{path: string, fileName: string, original: string, anonymized: string, plan: AnonPlan}[]>([]);
+  const [bulkReviewIndex, setBulkReviewIndex] = useState(0);
+  const [bulkApprovedResults, setBulkApprovedResults] = useState<Map<string, {fileName: string, content: string, status: 'approved' | 'skipped' | 'pending'}>>(new Map());
+  // Analysis progress (for parallel processing)
+  const [bulkAnalysisProgress, setBulkAnalysisProgress] = useState<{completed: number; total: number; isAnalyzing: boolean}>({completed: 0, total: 0, isAnalyzing: false});
 
   const activeFile = openedFiles.find(f => f.path === activeFilePath) || null;
 
@@ -92,6 +101,9 @@ export function MainLayout() {
       if (result) {
         setCurrentFolder({ path: result.folder_path, name: result.folder_name });
         setFolderFiles(result.files);
+        // Select all non-directory files by default
+        const allFilePaths = result.files.filter(f => !f.is_dir).map(f => f.path);
+        setSelectedFilesForBulk(new Set(allFilePaths));
         // Reset opened files when opening new folder
         setOpenedFiles([]);
         setActiveFilePath(null);
@@ -259,6 +271,209 @@ export function MainLayout() {
       }
   };
 
+  // === Bulk Review Mode Handlers ===
+
+  // Start bulk review: analyze each file with AI (parallel processing)
+  const handleStartBulkReview = async (taskContext: string) => {
+    if (selectedFilesForBulk.size === 0) return;
+
+    const targetFiles = Array.from(selectedFilesForBulk);
+    const total = targetFiles.length;
+
+    // Start analysis phase
+    setBulkAnalysisProgress({ completed: 0, total, isAnalyzing: true });
+    setIsProcessing(true);
+
+    try {
+      // Read all file contents first
+      console.log("[Bulk Review] Starting with files:", targetFiles);
+      const fileContents: {path: string, fileName: string, content: string}[] = [];
+      for (const filePath of targetFiles) {
+        try {
+          console.log("[Bulk Review] Reading file:", filePath);
+          const result = await invoke<{path: string, content: string, filename: string}>("read_file_content", { filePath });
+          console.log("[Bulk Review] Read success:", result.filename, "content length:", result.content.length);
+          fileContents.push({ path: filePath, fileName: result.filename, content: result.content });
+        } catch (readError) {
+          console.error("[Bulk Review] Failed to read file:", filePath, readError);
+        }
+      }
+      console.log("[Bulk Review] Total files read:", fileContents.length);
+
+      // Analyze each file with AI in parallel (Promise.all with progress tracking)
+      let completedCount = 0;
+      const analysisPromises = fileContents.map(async (file) => {
+        try {
+          // Call analyze_text for this specific file
+          const plan = await invoke<AnonPlan>("analyze_text", {
+            text: file.content,
+            taskContext
+          });
+          // Apply the plan
+          const anonymized = await invoke<string>("apply_plan", {
+            text: file.content,
+            plan
+          });
+
+          // Update progress
+          completedCount++;
+          setBulkAnalysisProgress(prev => ({ ...prev, completed: completedCount }));
+
+          return {
+            path: file.path,
+            fileName: file.fileName,
+            original: file.content,
+            anonymized,
+            plan,
+          };
+        } catch (e) {
+          console.error(`Failed to analyze ${file.fileName}:`, e);
+          completedCount++;
+          setBulkAnalysisProgress(prev => ({ ...prev, completed: completedCount }));
+          return null;
+        }
+      });
+
+      const results = await Promise.all(analysisPromises);
+      const validResults = results.filter((r): r is NonNullable<typeof r> => r !== null);
+      console.log("[Bulk Review] Valid results:", validResults.length, "of", results.length);
+
+      // Check if we have any valid results
+      if (validResults.length === 0) {
+        console.error("[Bulk Review] No files were successfully analyzed!");
+        alert("エラー: ファイルの分析に失敗しました。コンソールログを確認してください。");
+        return;
+      }
+
+      // Analysis complete - enter review mode
+      console.log("[Bulk Review] Entering review mode with", validResults.length, "files");
+      setBulkAnalysisProgress(prev => ({ ...prev, isAnalyzing: false }));
+      setBulkReviewQueue(validResults);
+      setBulkReviewIndex(0);
+      setBulkApprovedResults(new Map());
+      setBulkReviewMode(true);
+
+      // Load first file into diff view
+      if (validResults.length > 0) {
+        setOriginalContent(validResults[0].original);
+        setAnonymizedContent(validResults[0].anonymized);
+        setCurrentPlan(validResults[0].plan);
+      }
+    } catch (e) {
+      console.error("Bulk analysis failed:", e);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Approve current file and move to next
+  const handleBulkApprove = () => {
+    if (!bulkReviewMode || bulkReviewQueue.length === 0) return;
+
+    const current = bulkReviewQueue[bulkReviewIndex];
+    setBulkApprovedResults(prev => {
+      const next = new Map(prev);
+      next.set(current.path, { fileName: current.fileName, content: anonymizedContent, status: 'approved' });
+      return next;
+    });
+
+    moveToNextBulkFile();
+  };
+
+  // Skip current file and move to next
+  const handleBulkSkip = () => {
+    if (!bulkReviewMode) return;
+    const current = bulkReviewQueue[bulkReviewIndex];
+    setBulkApprovedResults(prev => {
+      const next = new Map(prev);
+      next.set(current.path, { fileName: current.fileName, content: anonymizedContent, status: 'skipped' });
+      return next;
+    });
+    moveToNextBulkFile();
+  };
+
+  // Go back to previous file
+  const handleBulkPrevious = () => {
+    if (!bulkReviewMode || bulkReviewIndex <= 0) return;
+    const prevIndex = bulkReviewIndex - 1;
+    setBulkReviewIndex(prevIndex);
+    const prev = bulkReviewQueue[prevIndex];
+    setOriginalContent(prev.original);
+    // Load previously saved content if exists, otherwise use AI result
+    const savedResult = bulkApprovedResults.get(prev.path);
+    setAnonymizedContent(savedResult?.content || prev.anonymized);
+    setCurrentPlan(prev.plan);
+  };
+
+  // Move to next file in queue or stay at last
+  const moveToNextBulkFile = () => {
+    const nextIndex = bulkReviewIndex + 1;
+    if (nextIndex >= bulkReviewQueue.length) {
+      // At the end - stay here, user can click "Complete" button
+      // Don't auto-complete - let user review all files first
+      return;
+    }
+    setBulkReviewIndex(nextIndex);
+    const next = bulkReviewQueue[nextIndex];
+    setOriginalContent(next.original);
+    // Load previously saved content if exists, otherwise use AI result
+    const savedResult = bulkApprovedResults.get(next.path);
+    setAnonymizedContent(savedResult?.content || next.anonymized);
+    setCurrentPlan(next.plan);
+  };
+
+  // Complete bulk review: show save dialog and save
+  const handleBulkComplete = async () => {
+    // Get only approved files
+    const approvedFiles = Array.from(bulkApprovedResults.values()).filter(r => r.status === 'approved');
+    if (approvedFiles.length === 0) {
+      // No files approved, just exit review mode
+      setBulkReviewMode(false);
+      setOriginalContent("");
+      setAnonymizedContent("");
+      return;
+    }
+
+    try {
+      // Use Tauri dialog to select output folder
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selectedPath = await open({
+        directory: true,
+        title: "保存先フォルダを選択",
+        defaultPath: currentFolder?.path,
+      });
+
+      if (selectedPath && typeof selectedPath === "string") {
+        const itemsToSave = approvedFiles.map(r => ({ fileName: r.fileName, content: r.content }));
+        await invoke("bulk_save", {
+          outputDir: selectedPath,
+          items: itemsToSave,
+        });
+        console.log(`Saved ${approvedFiles.length} files to ${selectedPath}`);
+      }
+    } catch (e) {
+      console.error("Bulk save failed:", e);
+    } finally {
+      // Exit review mode
+      setBulkReviewMode(false);
+      setBulkReviewQueue([]);
+      setBulkReviewIndex(0);
+      setBulkApprovedResults(new Map());
+      setOriginalContent("");
+      setAnonymizedContent("");
+    }
+  };
+
+  // Cancel bulk review
+  const handleBulkCancel = () => {
+    setBulkReviewMode(false);
+    setBulkReviewQueue([]);
+    setBulkReviewIndex(0);
+    setBulkApprovedResults(new Map());
+    setOriginalContent("");
+    setAnonymizedContent("");
+  };
+
   const hasUnsavedChanges = originalContent !== anonymizedContent;
 
   return (
@@ -286,6 +501,9 @@ export function MainLayout() {
               folderFiles={folderFiles}
               onFileClick={handleOpenFileFromTree}
               activeFilePath={activeFilePath || undefined}
+              selectionMode={!!currentFolder}
+              selectedFiles={selectedFilesForBulk}
+              onSelectionChange={setSelectedFilesForBulk}
             />
 
           </div>
@@ -328,6 +546,23 @@ export function MainLayout() {
                 fileCount={folderFiles.filter(f => !f.is_dir).length}
                 currentFileName={activeFile?.filename}
                 currentDirPath={currentFolder?.path}
+                selectedFilePaths={Array.from(selectedFilesForBulk)}
+                onStartBulkReview={handleStartBulkReview}
+                bulkReviewMode={bulkReviewMode}
+                bulkReviewProgress={bulkReviewMode ? { current: bulkReviewIndex + 1, total: bulkReviewQueue.length, fileName: bulkReviewQueue[bulkReviewIndex]?.fileName || "" } : undefined}
+                onBulkApprove={handleBulkApprove}
+                onBulkSkip={handleBulkSkip}
+                onBulkCancel={handleBulkCancel}
+                onBulkPrevious={handleBulkPrevious}
+                onBulkComplete={handleBulkComplete}
+                canGoPrevious={bulkReviewIndex > 0}
+                canGoNext={bulkReviewIndex < bulkReviewQueue.length - 1}
+                fileStatuses={bulkReviewQueue.map(f => ({
+                  path: f.path,
+                  fileName: f.fileName,
+                  status: bulkApprovedResults.get(f.path)?.status || 'pending'
+                }))}
+                bulkAnalysisProgress={bulkAnalysisProgress}
              />
           </div>
         </div>

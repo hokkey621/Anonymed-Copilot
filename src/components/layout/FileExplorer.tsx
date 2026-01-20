@@ -23,6 +23,10 @@ interface FileExplorerProps {
   folderName?: string;
   folderFiles: FolderFileEntry[];
   onFileClick: (filePath: string, filename: string) => void;
+  // Selection mode props
+  selectionMode?: boolean;
+  selectedFiles?: Set<string>;
+  onSelectionChange?: (paths: Set<string>) => void;
 }
 
 export function FileExplorer({
@@ -32,6 +36,9 @@ export function FileExplorer({
   folderName,
   folderFiles,
   onFileClick,
+  selectionMode = false,
+  selectedFiles = new Set(),
+  onSelectionChange,
 }: FileExplorerProps) {
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
   const [rootExpanded, setRootExpanded] = useState(true);
@@ -70,10 +77,38 @@ export function FileExplorer({
 
   const { roots, children } = buildTree(folderFiles);
 
+  // Selection helpers
+  const allFiles = folderFiles.filter(f => !f.is_dir);
+  const selectedCount = selectedFiles.size;
+  const allSelected = allFiles.length > 0 && selectedFiles.size === allFiles.length;
+
+  const handleSelectAll = () => {
+    if (!onSelectionChange) return;
+    const allPaths = new Set(allFiles.map(f => f.path));
+    onSelectionChange(allPaths);
+  };
+
+  const handleDeselectAll = () => {
+    if (!onSelectionChange) return;
+    onSelectionChange(new Set());
+  };
+
+  const handleSelectChange = (path: string, selected: boolean) => {
+    if (!onSelectionChange) return;
+    const newSelection = new Set(selectedFiles);
+    if (selected) {
+      newSelection.add(path);
+    } else {
+      newSelection.delete(path);
+    }
+    onSelectionChange(newSelection);
+  };
+
   const renderFileItem = (file: FolderFileEntry, depth: number = 0): React.ReactNode => {
     const isExpanded = expandedDirs.has(file.path);
     const fileChildren = children[file.path] || [];
     const isActive = activeFilePath === file.path;
+    const isSelected = selectedFiles.has(file.path);
 
     return (
       <FileTreeNode
@@ -86,6 +121,9 @@ export function FileExplorer({
         onToggle={toggleDir}
         onFileClick={onFileClick}
         renderChildren={renderFileItem}
+        selectionMode={selectionMode}
+        isSelected={isSelected}
+        onSelectChange={handleSelectChange}
       />
     );
   };
@@ -93,8 +131,43 @@ export function FileExplorer({
   return (
     <div className="flex flex-col h-full bg-background overflow-hidden">
       <div className="h-10 px-4 flex items-center text-sm font-semibold uppercase tracking-wider text-muted-foreground bg-muted/20 shrink-0">
-        <span className="truncate">{folderName || "Explorer"}</span>
+        <span className="truncate flex-1">{folderName || "Explorer"}</span>
       </div>
+
+      {/* Selection Controls Bar - only shown when folder is open and has files */}
+      {selectionMode && folderName && allFiles.length > 0 && (
+        <div className="px-4 py-2 border-b flex items-center justify-between text-xs bg-muted/10">
+          <span className="text-muted-foreground">
+            {selectedCount}件選択中
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={handleSelectAll}
+              disabled={allSelected}
+              className={cn(
+                "px-2 py-1 rounded transition-colors",
+                allSelected
+                  ? "text-muted-foreground/50 cursor-not-allowed"
+                  : "text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30"
+              )}
+            >
+              全選択
+            </button>
+            <button
+              onClick={handleDeselectAll}
+              disabled={selectedCount === 0}
+              className={cn(
+                "px-2 py-1 rounded transition-colors",
+                selectedCount === 0
+                  ? "text-muted-foreground/50 cursor-not-allowed"
+                  : "text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30"
+              )}
+            >
+              全解除
+            </button>
+          </div>
+        </div>
+      )}
 
       <ScrollArea className="flex-1 w-full">
         <div className="py-2">
