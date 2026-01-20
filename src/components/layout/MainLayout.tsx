@@ -388,19 +388,21 @@ export function MainLayout() {
     setCurrentPlan(prev.plan);
   };
 
-  // Move to next file in queue or finish
+  // Move to next file in queue or stay at last
   const moveToNextBulkFile = () => {
     const nextIndex = bulkReviewIndex + 1;
     if (nextIndex >= bulkReviewQueue.length) {
-      // All files processed - trigger save dialog
-      handleBulkComplete();
-    } else {
-      setBulkReviewIndex(nextIndex);
-      const next = bulkReviewQueue[nextIndex];
-      setOriginalContent(next.original);
-      setAnonymizedContent(next.anonymized);
-      setCurrentPlan(next.plan);
+      // At the end - stay here, user can click "Complete" button
+      // Don't auto-complete - let user review all files first
+      return;
     }
+    setBulkReviewIndex(nextIndex);
+    const next = bulkReviewQueue[nextIndex];
+    setOriginalContent(next.original);
+    // Load previously saved content if exists, otherwise use AI result
+    const savedResult = bulkApprovedResults.get(next.path);
+    setAnonymizedContent(savedResult?.content || next.anonymized);
+    setCurrentPlan(next.plan);
   };
 
   // Complete bulk review: show save dialog and save
@@ -535,7 +537,14 @@ export function MainLayout() {
                 onBulkSkip={handleBulkSkip}
                 onBulkCancel={handleBulkCancel}
                 onBulkPrevious={handleBulkPrevious}
+                onBulkComplete={handleBulkComplete}
                 canGoPrevious={bulkReviewIndex > 0}
+                canGoNext={bulkReviewIndex < bulkReviewQueue.length - 1}
+                fileStatuses={bulkReviewQueue.map(f => ({
+                  path: f.path,
+                  fileName: f.fileName,
+                  status: bulkApprovedResults.get(f.path)?.status || 'pending'
+                }))}
                 bulkAnalysisProgress={bulkAnalysisProgress}
              />
           </div>

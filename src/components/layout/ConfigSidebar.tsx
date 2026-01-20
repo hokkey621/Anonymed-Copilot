@@ -63,7 +63,10 @@ interface ConfigSidebarProps {
   onBulkSkip?: () => void;
   onBulkCancel?: () => void;
   onBulkPrevious?: () => void;
+  onBulkComplete?: () => void;
   canGoPrevious?: boolean;
+  canGoNext?: boolean;
+  fileStatuses?: { path: string; fileName: string; status: 'approved' | 'skipped' | 'pending' }[];
 }
 
 const MODEL_OPTIONS = [
@@ -89,7 +92,10 @@ export function ConfigSidebar({
   onBulkSkip,
   onBulkCancel,
   onBulkPrevious,
+  onBulkComplete,
   canGoPrevious = false,
+  canGoNext = true,
+  fileStatuses = [],
 }: ConfigSidebarProps) {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -465,17 +471,47 @@ export function ConfigSidebar({
               size="sm"
               variant="default"
               onClick={onBulkApprove}
+              disabled={!canGoNext}
               className="flex-1"
             >
-              承認して次へ
+              {canGoNext ? "承認して次へ" : "承認"}
             </Button>
           </div>
-          <button
-            onClick={onBulkCancel}
-            className="w-full text-xs text-muted-foreground hover:text-foreground transition-colors py-1"
-          >
-            レビューを中断
-          </button>
+
+          {/* File status list */}
+          <div className="mt-2 max-h-24 overflow-y-auto text-xs space-y-1">
+            {fileStatuses.map((f, i) => (
+              <div key={f.path} className={`flex items-center gap-1.5 px-1 py-0.5 rounded ${
+                bulkReviewProgress?.current === i + 1 ? 'bg-blue-100 dark:bg-blue-900/30' : ''
+              }`}>
+                <span className={`w-3 h-3 rounded-full flex-shrink-0 ${
+                  f.status === 'approved' ? 'bg-green-500' :
+                  f.status === 'skipped' ? 'bg-gray-400' : 'bg-gray-200'
+                }`} />
+                <span className="truncate flex-1">{f.fileName}</span>
+                <span className="text-muted-foreground">
+                  {f.status === 'approved' ? '✓' : f.status === 'skipped' ? '−' : ''}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex gap-2 mt-2">
+            <button
+              onClick={onBulkCancel}
+              className="flex-1 text-xs text-muted-foreground hover:text-foreground transition-colors py-1.5"
+            >
+              中断
+            </button>
+            <Button
+              size="sm"
+              variant="default"
+              onClick={onBulkComplete}
+              className="flex-1"
+            >
+              保存して完了
+            </Button>
+          </div>
         </div>
       )}
 
