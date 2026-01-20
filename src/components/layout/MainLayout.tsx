@@ -51,9 +51,11 @@ export function MainLayout() {
 
   // Bulk review mode state
   const [bulkReviewMode, setBulkReviewMode] = useState(false);
-  const [bulkReviewQueue, setBulkReviewQueue] = useState<{path: string, fileName: string, original: string, anonymized: string}[]>([]);
+  const [bulkReviewQueue, setBulkReviewQueue] = useState<{path: string, fileName: string, original: string, anonymized: string, plan: AnonPlan}[]>([]);
   const [bulkReviewIndex, setBulkReviewIndex] = useState(0);
   const [bulkApprovedResults, setBulkApprovedResults] = useState<{fileName: string, content: string}[]>([]);
+  // Analysis progress (for parallel processing)
+  const [bulkAnalysisProgress, setBulkAnalysisProgress] = useState<{completed: number; total: number; isAnalyzing: boolean}>({completed: 0, total: 0, isAnalyzing: false});
 
   const activeFile = openedFiles.find(f => f.path === activeFilePath) || null;
 
@@ -271,39 +273,78 @@ export function MainLayout() {
 
   // === Bulk Review Mode Handlers ===
 
-  // Start bulk review: load all files with plan applied
-  const handleStartBulkReview = async (plan: AnonPlan) => {
+  // Start bulk review: analyze each file with AI (parallel processing)
+  const handleStartBulkReview = async (taskContext: string) => {
     if (selectedFilesForBulk.size === 0) return;
 
+    const targetFiles = Array.from(selectedFilesForBulk);
+    const total = targetFiles.length;
+
+    // Start analysis phase
+    setBulkAnalysisProgress({ completed: 0, total, isAnalyzing: true });
     setIsProcessing(true);
+
     try {
-      const targetFiles = Array.from(selectedFilesForBulk);
-      const previews = await invoke<{file_path: string, file_name: string, original_content: string, anonymized_content: string}[]>(
-        "bulk_preview",
-        { targetFiles, plan }
-      );
+      // Read all file contents first
+      const fileContents: {path: string, fileName: string, content: string}[] = [];
+      for (const filePath of targetFiles) {
+        const content = await invoke<string>("read_file_content", { path: filePath });
+        const fileName = filePath.split('/').pop() || filePath;
+        fileContents.push({ path: filePath, fileName, content });
+      }
 
-      // Convert to queue format
-      const queue = previews.map(p => ({
-        path: p.file_path,
-        fileName: p.file_name,
-        original: p.original_content,
-        anonymized: p.anonymized_content,
-      }));
+      // Analyze each file with AI in parallel (Promise.all with progress tracking)
+      let completedCount = 0;
+      const analysisPromises = fileContents.map(async (file) => {
+        try {
+          // Call analyze_text for this specific file
+          const plan = await invoke<AnonPlan>("analyze_text", {
+            text: file.content,
+            taskContext
+          });
+          // Apply the plan
+          const anonymized = await invoke<string>("apply_plan", {
+            text: file.content,
+            plan
+          });
 
-      setBulkReviewQueue(queue);
+          // Update progress
+          completedCount++;
+          setBulkAnalysisProgress(prev => ({ ...prev, completed: completedCount }));
+
+          return {
+            path: file.path,
+            fileName: file.fileName,
+            original: file.content,
+            anonymized,
+            plan,
+          };
+        } catch (e) {
+          console.error(`Failed to analyze ${file.fileName}:`, e);
+          completedCount++;
+          setBulkAnalysisProgress(prev => ({ ...prev, completed: completedCount }));
+          return null;
+        }
+      });
+
+      const results = await Promise.all(analysisPromises);
+      const validResults = results.filter((r): r is NonNullable<typeof r> => r !== null);
+
+      // Analysis complete - enter review mode
+      setBulkAnalysisProgress(prev => ({ ...prev, isAnalyzing: false }));
+      setBulkReviewQueue(validResults);
       setBulkReviewIndex(0);
       setBulkApprovedResults([]);
       setBulkReviewMode(true);
 
       // Load first file into diff view
-      if (queue.length > 0) {
-        setOriginalContent(queue[0].original);
-        setAnonymizedContent(queue[0].anonymized);
-        setCurrentPlan(plan);
+      if (validResults.length > 0) {
+        setOriginalContent(validResults[0].original);
+        setAnonymizedContent(validResults[0].anonymized);
+        setCurrentPlan(validResults[0].plan);
       }
     } catch (e) {
-      console.error("Bulk preview failed:", e);
+      console.error("Bulk analysis failed:", e);
     } finally {
       setIsProcessing(false);
     }
@@ -336,6 +377,7 @@ export function MainLayout() {
       const next = bulkReviewQueue[nextIndex];
       setOriginalContent(next.original);
       setAnonymizedContent(next.anonymized);
+      setCurrentPlan(next.plan);
     }
   };
 
@@ -467,6 +509,7 @@ export function MainLayout() {
                 onBulkApprove={handleBulkApprove}
                 onBulkSkip={handleBulkSkip}
                 onBulkCancel={handleBulkCancel}
+                bulkAnalysisProgress={bulkAnalysisProgress}
              />
           </div>
         </div>

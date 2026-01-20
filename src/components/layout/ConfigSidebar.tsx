@@ -55,9 +55,10 @@ interface ConfigSidebarProps {
   currentFileName?: string;
   selectedFilePaths?: string[];
   // Bulk review mode props
-  onStartBulkReview?: (plan: any) => void;
+  onStartBulkReview?: (taskContext: string) => void;
   bulkReviewMode?: boolean;
   bulkReviewProgress?: { current: number; total: number; fileName: string };
+  bulkAnalysisProgress?: { completed: number; total: number; isAnalyzing: boolean };
   onBulkApprove?: () => void;
   onBulkSkip?: () => void;
   onBulkCancel?: () => void;
@@ -81,6 +82,7 @@ export function ConfigSidebar({
   onStartBulkReview,
   bulkReviewMode = false,
   bulkReviewProgress,
+  bulkAnalysisProgress,
   onBulkApprove,
   onBulkSkip,
   onBulkCancel,
@@ -252,9 +254,9 @@ export function ConfigSidebar({
 
     // If in bulk review mode, this should not be called directly
     // Use onStartBulkReview instead for sequential review flow
-    if (currentDirPath && currentPlan && onStartBulkReview && selectedFilePaths.length > 0) {
-      // Start sequential review mode
-      onStartBulkReview(currentPlan);
+    if (currentDirPath && onStartBulkReview && selectedFilePaths.length > 0) {
+      // Start sequential review mode with per-file AI analysis
+      onStartBulkReview(taskContext);
       setActiveBulkPlan(null);
       return;
     }
@@ -397,6 +399,28 @@ export function ConfigSidebar({
           )}
         </div>
       </ScrollArea>
+
+      {/* Analysis Progress - shown during AI analysis phase */}
+      {bulkAnalysisProgress?.isAnalyzing && (
+        <div className="border-t p-3 space-y-2 bg-amber-50 dark:bg-amber-900/20">
+          <div className="flex items-center gap-2 text-sm">
+            <span className="inline-flex gap-1">
+              <span className="inline-block w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+              <span className="inline-block w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+              <span className="inline-block w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+            </span>
+            <span className="font-medium">
+              🔄 AI分析中... {bulkAnalysisProgress.completed}/{bulkAnalysisProgress.total}件完了
+            </span>
+          </div>
+          <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+            <div
+              className="h-full bg-amber-500 transition-all"
+              style={{ width: `${(bulkAnalysisProgress.completed / bulkAnalysisProgress.total) * 100}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Bulk Review Controls - shown when in review mode */}
       {bulkReviewMode && bulkReviewProgress && (
