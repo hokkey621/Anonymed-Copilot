@@ -106,12 +106,16 @@ pub fn anonymization_purpose_options() -> Vec<String> {
 }
 
 pub fn default_suggestions() -> Vec<String> {
-    vec!["内容を確認する".to_string(), "詳しく教えて".to_string()]
+    vec![
+        "内容を確認する".to_string(),
+        "詳しく教えて".to_string(),
+        "匿名化プランを作成".to_string(),
+    ]
 }
 
 pub fn plan_created_suggestions() -> Vec<String> {
     vec![
-        "変更を適用して保存".to_string(),
+        "変更を適用".to_string(),
         "修正したい".to_string(),
         "詳しく説明して".to_string(),
     ]
