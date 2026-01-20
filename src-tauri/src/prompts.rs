@@ -20,7 +20,10 @@ pub const AGENT_BASE_PROMPT: &str = r#"あなたは「Anonymed Copilot」とい�
 ## 禁止事項
 - [THOUGHT]や[thinking]などのメタタグを出力しない
 - 内部的な思考過程を出力に含めない
-- 長文の説明は避ける"#;
+- 長文の説明は避ける
+
+## 重要: ファイルが開かれていない場合
+ユーザーがまだファイルを開いていない場合でも、一般的な質問（使い方、匿名化の仕組みなど）には回答してください。「ファイルをアップロードしてください」と繰り返さないでください。"#;
 
 /// System prompt for bulk execution mode
 pub fn bulk_execution_prompt(file_count: usize) -> String {
@@ -87,11 +90,11 @@ pub fn help_suggestions() -> Vec<String> {
 }
 
 pub fn bulk_options() -> Vec<String> {
-    vec!["実行して".to_string(), "キャンセル".to_string()]
+    vec!["処理を開始".to_string(), "キャンセル".to_string()]
 }
 
 pub fn create_plan_options() -> Vec<String> {
-    vec!["計画を立てて".to_string(), "もう少し詳しく".to_string()]
+    vec!["変更内容を確認".to_string(), "もう少し詳しく".to_string()]
 }
 
 pub fn anonymization_purpose_options() -> Vec<String> {
@@ -103,7 +106,15 @@ pub fn anonymization_purpose_options() -> Vec<String> {
 }
 
 pub fn default_suggestions() -> Vec<String> {
-    vec!["計画を立てて".to_string(), "詳しく教えて".to_string()]
+    vec!["内容を確認する".to_string(), "詳しく教えて".to_string()]
+}
+
+pub fn plan_created_suggestions() -> Vec<String> {
+    vec![
+        "変更を適用して保存".to_string(),
+        "修正したい".to_string(),
+        "詳しく説明して".to_string(),
+    ]
 }
 
 /// Default workflow steps

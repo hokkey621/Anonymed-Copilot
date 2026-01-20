@@ -77,7 +77,7 @@ fn detect_purpose_intent(messages: &[ChatMessage]) -> bool {
 }
 
 /// Generate contextual suggestions based on conversation state
-fn generate_contextual_suggestions(messages: &[ChatMessage], is_bulk_request: bool, has_purpose: bool) -> Option<Vec<String>> {
+fn generate_contextual_suggestions(messages: &[ChatMessage], is_bulk_request: bool, has_purpose: bool, plan_created: bool) -> Option<Vec<String>> {
     use crate::prompts;
 
     // Count user messages to determine conversation phase
@@ -102,7 +102,12 @@ fn generate_contextual_suggestions(messages: &[ChatMessage], is_bulk_request: bo
             return Some(prompts::bulk_options());
         }
 
-        // Purpose expressed - ask to create plan
+        // If a plan was just created, prioritize execution or modification
+        if plan_created {
+            return Some(prompts::plan_created_suggestions());
+        }
+
+        // Purpose expressed - ask to create plan (only if plan not already created)
         if has_purpose {
             return Some(prompts::create_plan_options());
         }
@@ -173,7 +178,7 @@ pub async fn agent_chat(
     };
 
     // Generate contextual suggestions based on conversation state
-    let suggestions = generate_contextual_suggestions(&messages, is_bulk_request, has_purpose);
+    let suggestions = generate_contextual_suggestions(&messages, is_bulk_request, has_purpose, bulk_plan.is_some());
 
     Ok(AgentChatResponse {
         message: ai_response,
@@ -252,7 +257,7 @@ pub async fn agent_chat_streaming(
         (None, None)
     };
 
-    let suggestions = generate_contextual_suggestions(&messages, is_bulk_request, has_purpose);
+    let suggestions = generate_contextual_suggestions(&messages, is_bulk_request, has_purpose, bulk_plan.is_some());
 
     Ok(AgentChatResponse {
         message: ai_response,
