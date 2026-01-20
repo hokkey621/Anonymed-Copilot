@@ -471,7 +471,6 @@ export function ConfigSidebar({
               size="sm"
               variant="default"
               onClick={onBulkApprove}
-              disabled={!canGoNext}
               className="flex-1"
             >
               {canGoNext ? "承認して次へ" : "承認"}
