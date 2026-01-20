@@ -173,7 +173,7 @@ export function BulkPlanCard({ plan, workflowSteps, onCommit, isExecuting, progr
               実行中...
             </>
           ) : (
-            '実行'
+            '変更を適用'
           )}
         </Button>
       </div>
