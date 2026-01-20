@@ -8,6 +8,7 @@ import { FileExplorer, OpenedFile } from "./FileExplorer";
 import { MenuBar } from "./MenuBar";
 import { StatusBar } from "./StatusBar";
 import { EditorTabs } from "@/components/editor/EditorTabs";
+import { ResizablePanel } from "@/components/ui/ResizablePanel";
 
 interface OpenFileResult {
   path: string;
@@ -493,7 +494,13 @@ export function MainLayout() {
         <div className="flex-1 flex min-w-0 overflow-hidden">
 
           {/* File Explorer */}
-          <div className="w-64 shrink-0 h-full bg-background border-r overflow-hidden">
+          <ResizablePanel
+            defaultWidth={256}
+            minWidth={180}
+            maxWidth={450}
+            handlePosition="right"
+            className="bg-background border-r overflow-hidden"
+          >
             <FileExplorer
               onOpenFile={handleOpenFile}
               onOpenFolder={handleOpenFolder}
@@ -505,8 +512,7 @@ export function MainLayout() {
               selectedFiles={selectedFilesForBulk}
               onSelectionChange={setSelectedFilesForBulk}
             />
-
-          </div>
+          </ResizablePanel>
 
           {/* Editor Area */}
           <div className="flex-1 h-full bg-background overflow-hidden flex flex-col">
@@ -537,7 +543,13 @@ export function MainLayout() {
           </div>
 
           {/* Chat Sidebar */}
-          <div className="w-96 shrink-0 h-full bg-background border-l overflow-hidden">
+          <ResizablePanel
+            defaultWidth={384}
+            minWidth={280}
+            maxWidth={600}
+            handlePosition="left"
+            className="bg-background border-l overflow-hidden"
+          >
              <ConfigSidebar
                 onRunAnonymization={handleAnonymize}
                 isProcessing={isProcessing}
@@ -564,7 +576,7 @@ export function MainLayout() {
                 }))}
                 bulkAnalysisProgress={bulkAnalysisProgress}
              />
-          </div>
+          </ResizablePanel>
         </div>
       </div>
 
