@@ -76,8 +76,17 @@ fn detect_purpose_intent(messages: &[ChatMessage]) -> bool {
     false
 }
 
+/// Check if the user message indicates intent to create a plan
+fn detect_planning_intent(messages: &[ChatMessage]) -> bool {
+    if let Some(last_user_msg) = messages.iter().rev().find(|m| m.role == "user") {
+        let content = &last_user_msg.content;
+        return ["計画", "プラン", "作成", "立てて"].iter().any(|kw| content.contains(kw));
+    }
+    false
+}
+
 /// Generate contextual suggestions based on conversation state
-fn generate_contextual_suggestions(messages: &[ChatMessage], is_bulk_request: bool, has_purpose: bool) -> Option<Vec<String>> {
+fn generate_contextual_suggestions(messages: &[ChatMessage], is_bulk_request: bool, has_purpose: bool, plan_created: bool) -> Option<Vec<String>> {
     use crate::prompts;
 
     // Count user messages to determine conversation phase
@@ -102,7 +111,12 @@ fn generate_contextual_suggestions(messages: &[ChatMessage], is_bulk_request: bo
             return Some(prompts::bulk_options());
         }
 
-        // Purpose expressed - ask to create plan
+        // If a plan was just created, prioritize execution or modification
+        if plan_created {
+            return Some(prompts::plan_created_suggestions());
+        }
+
+        // Purpose expressed - ask to create plan (only if plan not already created)
         if has_purpose {
             return Some(prompts::create_plan_options());
         }
@@ -173,7 +187,7 @@ pub async fn agent_chat(
     };
 
     // Generate contextual suggestions based on conversation state
-    let suggestions = generate_contextual_suggestions(&messages, is_bulk_request, has_purpose);
+    let suggestions = generate_contextual_suggestions(&messages, is_bulk_request, has_purpose, bulk_plan.is_some());
 
     Ok(AgentChatResponse {
         message: ai_response,
@@ -234,15 +248,34 @@ pub async fn agent_chat_streaming(
         "message": "完了"
     }));
 
-    // Generate execution plan when needed
-    let (bulk_plan, workflow_steps) = if is_bulk_request || has_purpose {
+    // Check if user has expressed anonymization purpose
+    // let has_purpose = detect_purpose_intent(&messages); // Unused for trigger now
+    let planning_intent = detect_planning_intent(&messages);
+
+    let (bulk_plan, workflow_steps) = if is_bulk_request || planning_intent {
         let effective_count = if file_count > 0 { file_count } else { 1 };
-        let estimated_time = (effective_count as u64) * 50;
+        // Estimate 10 seconds per file for LLM processing + overhead
+        let estimated_time = (effective_count as u64) * 10000;
+
+        // Extract bullet points from AI response
+        let extracted_summary: Vec<String> = ai_response
+            .lines()
+            .filter(|line| line.trim().starts_with("- ") || line.trim().starts_with("・") || line.trim().starts_with("* "))
+            .map(|line| line.trim().trim_start_matches(|c| c == '-' || c == '*' || c == '・').trim().to_string())
+            .filter(|s| !s.is_empty())
+            .take(5) // Limit to 5 items
+            .collect();
+
+        let policy_summary = if !extracted_summary.is_empty() {
+            extracted_summary
+        } else {
+            prompts::default_policy_summary()
+        };
 
         let plan = BulkExecutionPlan {
             target_count: effective_count,
             estimated_time_ms: estimated_time,
-            policy_summary: prompts::default_policy_summary(),
+            policy_summary,
         };
 
         let steps = prompts::default_workflow_steps(effective_count > 1);
@@ -252,7 +285,7 @@ pub async fn agent_chat_streaming(
         (None, None)
     };
 
-    let suggestions = generate_contextual_suggestions(&messages, is_bulk_request, has_purpose);
+    let suggestions = generate_contextual_suggestions(&messages, is_bulk_request, has_purpose, bulk_plan.is_some());
 
     Ok(AgentChatResponse {
         message: ai_response,

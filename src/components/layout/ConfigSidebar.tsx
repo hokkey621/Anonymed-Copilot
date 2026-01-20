@@ -70,9 +70,8 @@ interface ConfigSidebarProps {
 }
 
 const MODEL_OPTIONS = [
-  { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
-  { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
-  { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash" },
+  { value: "gemini-3.0-flash", label: "Gemini 3.0 Flash" },
+  { value: "other", label: "Other Model" },
 ];
 
 export function ConfigSidebar({
@@ -100,14 +99,14 @@ export function ConfigSidebar({
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "assistant",
-      content: "こんにちは、Anonymed Copilotです。まず、作業するファイルかフォルダを開いてください。次に、チャットで質問するか質問例をタップしてください。",
-      suggestions: ["匿名化したい", "使い方が知りたい"]
+      content: "こんにちは、Anonymed Copilotです。匿名化したいカルテや資料を開いてください。元のファイルは変更されないので安心してください。",
+      suggestions: ["匿名化したい", "使い方を教えて"]
     }
   ]);
   const [inputInfo, setInputInfo] = useState("");
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [taskContext, setTaskContext] = useState("Medical Case Study");
-  const [selectedModel, setSelectedModel] = useState("gemini-3-flash-preview");
+  const [selectedModel, setSelectedModel] = useState("gemini-3.0-flash");
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{ completed: number; total: number; currentFile?: string } | null>(null);
   const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([]);
@@ -333,7 +332,7 @@ export function ConfigSidebar({
               suggestions={messages[messages.length - 1].suggestions!}
               onSelect={async (text) => {
                 // Directly send the suggestion as a message
-                if (!currentContent || isChatLoading) return;
+                if (isChatLoading) return;
 
                 const userMsg: Message = { role: "user", content: text };
                 setMessages(prev => [...prev, userMsg]);
@@ -385,7 +384,7 @@ export function ConfigSidebar({
                   setIsChatLoading(false);
                 }
               }}
-              disabled={isChatLoading || !currentContent}
+              disabled={isChatLoading}
             />
           )}
           {isChatLoading && (
@@ -531,15 +530,15 @@ export function ConfigSidebar({
             className="flex-1 px-3 py-2 text-sm rounded-md border bg-background focus:outline-none focus:ring-1 focus:ring-blue-500"
             value={inputInfo}
             onChange={(e) => setInputInfo(e.target.value)}
-            placeholder={currentContent ? "質問を入力..." : "テキストを選択してください"}
+            placeholder={currentContent ? "質問を入力..." : "ご質問をどうぞ"}
             onKeyDown={(e) => e.key === 'Enter' && e.metaKey && handleSendMessage()}
-            disabled={!currentContent || isProcessing}
+            disabled={isProcessing}
           />
           <Button
             size="sm"
             variant="default"
             onClick={handleSendMessage}
-            disabled={!currentContent || !inputInfo.trim() || isChatLoading}
+            disabled={!inputInfo.trim() || isChatLoading}
             className="shrink-0 gap-1.5"
           >
             <Send size={14} />
