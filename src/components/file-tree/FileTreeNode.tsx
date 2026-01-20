@@ -59,7 +59,7 @@ export function FileTreeNode({
       <div>
         <div
           className={cn(
-            "flex items-center py-3 cursor-pointer text-base select-none transition-colors font-mono",
+            "flex items-center py-3 cursor-pointer text-base select-none transition-colors font-mono overflow-hidden",
             "hover:bg-slate-100 dark:hover:bg-slate-800/70"
           )}
           style={{ paddingLeft: `${depth * baseIndent + 12}px`, paddingRight: "12px" }}
@@ -83,7 +83,7 @@ export function FileTreeNode({
           >
             {isExpanded ? "−" : "+"}
           </span>
-          <span className="truncate font-medium ml-2">{file.filename}</span>
+          <span className="truncate flex-1 min-w-0 font-medium ml-2" title={file.filename}>{file.filename}</span>
         </div>
         {isExpanded && children.map((child) => renderChildren(child, depth + 1))}
       </div>
@@ -94,7 +94,7 @@ export function FileTreeNode({
   return (
     <div
       className={cn(
-        "flex items-center py-3 cursor-pointer text-base select-none transition-colors group font-mono",
+        "flex items-center py-3 cursor-pointer text-base select-none transition-colors group font-mono overflow-hidden",
         isActive
           ? "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
           : "hover:bg-slate-100 dark:hover:bg-slate-800/70"
@@ -130,7 +130,7 @@ export function FileTreeNode({
       >
         ├
       </span>
-      <span className="truncate flex-1 ml-2">{file.filename}</span>
+      <span className="truncate flex-1 min-w-0 ml-2" title={file.filename}>{file.filename}</span>
       {openedFileInfo?.hasChanges && (
         <span className="text-orange-500 font-bold mr-2" aria-label="未保存の変更">
           ●

@@ -130,8 +130,8 @@ export function FileExplorer({
 
   return (
     <div className="flex flex-col h-full bg-background overflow-hidden">
-      <div className="h-10 px-4 flex items-center text-sm font-semibold uppercase tracking-wider text-muted-foreground bg-muted/20 shrink-0">
-        <span className="truncate flex-1">{folderName || "Explorer"}</span>
+      <div className="h-10 px-4 flex items-center text-sm font-semibold uppercase tracking-wider text-muted-foreground bg-muted/20 shrink-0 overflow-hidden">
+        <span className="truncate flex-1 min-w-0" title={folderName || "Explorer"}>{folderName || "Explorer"}</span>
       </div>
 
       {/* Selection Controls Bar - only shown when folder is open and has files */}
@@ -169,8 +169,8 @@ export function FileExplorer({
         </div>
       )}
 
-      <ScrollArea className="flex-1 w-full">
-        <div className="py-2">
+      <ScrollArea className="flex-1 w-full overflow-hidden">
+        <div className="py-2 w-full overflow-hidden">
           {/* Folder Tree Section */}
           {!folderName && folderFiles.length === 0 ? (
             <div className="space-y-1">
@@ -210,7 +210,7 @@ export function FileExplorer({
               {/* Root Folder Header - Clickable */}
               <div
                 className={cn(
-                  "flex items-center py-3 px-4 cursor-pointer text-base select-none transition-colors font-mono",
+                  "flex items-center py-3 px-4 cursor-pointer text-base select-none transition-colors font-mono overflow-hidden",
                   "hover:bg-slate-100 dark:hover:bg-slate-800/70"
                 )}
                 onClick={() => setRootExpanded(!rootExpanded)}
@@ -233,7 +233,7 @@ export function FileExplorer({
                 >
                   {rootExpanded ? "−" : "+"}
                 </span>
-                <span className="truncate font-semibold ml-2 uppercase text-xs tracking-wider text-muted-foreground">
+                <span className="truncate flex-1 min-w-0 font-semibold ml-2 uppercase text-xs tracking-wider text-muted-foreground" title={folderName}>
                   {folderName}
                 </span>
               </div>
