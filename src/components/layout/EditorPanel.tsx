@@ -464,7 +464,7 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
             onMount={handleEditorDidMount}
             options={{
                 readOnly: false,
-                renderSideBySide: true,
+                renderSideBySide: false,
                 minimap: { enabled: false },
                 scrollBeyondLastLine: false,
                 originalEditable: false,
