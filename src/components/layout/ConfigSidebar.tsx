@@ -62,6 +62,8 @@ interface ConfigSidebarProps {
   onBulkApprove?: () => void;
   onBulkSkip?: () => void;
   onBulkCancel?: () => void;
+  onBulkPrevious?: () => void;
+  canGoPrevious?: boolean;
 }
 
 const MODEL_OPTIONS = [
@@ -86,6 +88,8 @@ export function ConfigSidebar({
   onBulkApprove,
   onBulkSkip,
   onBulkCancel,
+  onBulkPrevious,
+  canGoPrevious = false,
 }: ConfigSidebarProps) {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -440,6 +444,15 @@ export function ConfigSidebar({
             />
           </div>
           <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={onBulkPrevious}
+              disabled={!canGoPrevious}
+              className="px-2"
+            >
+              ← 前へ
+            </Button>
             <Button
               size="sm"
               variant="outline"

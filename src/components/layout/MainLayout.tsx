@@ -53,7 +53,7 @@ export function MainLayout() {
   const [bulkReviewMode, setBulkReviewMode] = useState(false);
   const [bulkReviewQueue, setBulkReviewQueue] = useState<{path: string, fileName: string, original: string, anonymized: string, plan: AnonPlan}[]>([]);
   const [bulkReviewIndex, setBulkReviewIndex] = useState(0);
-  const [bulkApprovedResults, setBulkApprovedResults] = useState<{fileName: string, content: string}[]>([]);
+  const [bulkApprovedResults, setBulkApprovedResults] = useState<Map<string, {fileName: string, content: string, status: 'approved' | 'skipped' | 'pending'}>>(new Map());
   // Analysis progress (for parallel processing)
   const [bulkAnalysisProgress, setBulkAnalysisProgress] = useState<{completed: number; total: number; isAnalyzing: boolean}>({completed: 0, total: 0, isAnalyzing: false});
 
@@ -333,7 +333,7 @@ export function MainLayout() {
       setBulkAnalysisProgress(prev => ({ ...prev, isAnalyzing: false }));
       setBulkReviewQueue(validResults);
       setBulkReviewIndex(0);
-      setBulkApprovedResults([]);
+      setBulkApprovedResults(new Map());
       setBulkReviewMode(true);
 
       // Load first file into diff view
@@ -354,7 +354,11 @@ export function MainLayout() {
     if (!bulkReviewMode || bulkReviewQueue.length === 0) return;
 
     const current = bulkReviewQueue[bulkReviewIndex];
-    setBulkApprovedResults(prev => [...prev, { fileName: current.fileName, content: anonymizedContent }]);
+    setBulkApprovedResults(prev => {
+      const next = new Map(prev);
+      next.set(current.path, { fileName: current.fileName, content: anonymizedContent, status: 'approved' });
+      return next;
+    });
 
     moveToNextBulkFile();
   };
@@ -362,7 +366,26 @@ export function MainLayout() {
   // Skip current file and move to next
   const handleBulkSkip = () => {
     if (!bulkReviewMode) return;
+    const current = bulkReviewQueue[bulkReviewIndex];
+    setBulkApprovedResults(prev => {
+      const next = new Map(prev);
+      next.set(current.path, { fileName: current.fileName, content: anonymizedContent, status: 'skipped' });
+      return next;
+    });
     moveToNextBulkFile();
+  };
+
+  // Go back to previous file
+  const handleBulkPrevious = () => {
+    if (!bulkReviewMode || bulkReviewIndex <= 0) return;
+    const prevIndex = bulkReviewIndex - 1;
+    setBulkReviewIndex(prevIndex);
+    const prev = bulkReviewQueue[prevIndex];
+    setOriginalContent(prev.original);
+    // Load previously saved content if exists, otherwise use AI result
+    const savedResult = bulkApprovedResults.get(prev.path);
+    setAnonymizedContent(savedResult?.content || prev.anonymized);
+    setCurrentPlan(prev.plan);
   };
 
   // Move to next file in queue or finish
@@ -382,7 +405,9 @@ export function MainLayout() {
 
   // Complete bulk review: show save dialog and save
   const handleBulkComplete = async () => {
-    if (bulkApprovedResults.length === 0) {
+    // Get only approved files
+    const approvedFiles = Array.from(bulkApprovedResults.values()).filter(r => r.status === 'approved');
+    if (approvedFiles.length === 0) {
       // No files approved, just exit review mode
       setBulkReviewMode(false);
       setOriginalContent("");
@@ -400,11 +425,12 @@ export function MainLayout() {
       });
 
       if (selectedPath && typeof selectedPath === "string") {
+        const itemsToSave = approvedFiles.map(r => ({ fileName: r.fileName, content: r.content }));
         await invoke("bulk_save", {
           outputDir: selectedPath,
-          items: bulkApprovedResults,
+          items: itemsToSave,
         });
-        console.log(`Saved ${bulkApprovedResults.length} files to ${selectedPath}`);
+        console.log(`Saved ${approvedFiles.length} files to ${selectedPath}`);
       }
     } catch (e) {
       console.error("Bulk save failed:", e);
@@ -413,7 +439,7 @@ export function MainLayout() {
       setBulkReviewMode(false);
       setBulkReviewQueue([]);
       setBulkReviewIndex(0);
-      setBulkApprovedResults([]);
+      setBulkApprovedResults(new Map());
       setOriginalContent("");
       setAnonymizedContent("");
     }
@@ -424,7 +450,7 @@ export function MainLayout() {
     setBulkReviewMode(false);
     setBulkReviewQueue([]);
     setBulkReviewIndex(0);
-    setBulkApprovedResults([]);
+    setBulkApprovedResults(new Map());
     setOriginalContent("");
     setAnonymizedContent("");
   };
@@ -508,6 +534,8 @@ export function MainLayout() {
                 onBulkApprove={handleBulkApprove}
                 onBulkSkip={handleBulkSkip}
                 onBulkCancel={handleBulkCancel}
+                onBulkPrevious={handleBulkPrevious}
+                canGoPrevious={bulkReviewIndex > 0}
                 bulkAnalysisProgress={bulkAnalysisProgress}
              />
           </div>
