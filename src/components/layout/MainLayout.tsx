@@ -288,9 +288,8 @@ export function MainLayout() {
       // Read all file contents first
       const fileContents: {path: string, fileName: string, content: string}[] = [];
       for (const filePath of targetFiles) {
-        const content = await invoke<string>("read_file_content", { path: filePath });
-        const fileName = filePath.split('/').pop() || filePath;
-        fileContents.push({ path: filePath, fileName, content });
+        const result = await invoke<{path: string, content: string, filename: string}>("read_file_content", { filePath });
+        fileContents.push({ path: filePath, fileName: result.filename, content: result.content });
       }
 
       // Analyze each file with AI in parallel (Promise.all with progress tracking)
