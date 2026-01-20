@@ -286,11 +286,19 @@ export function MainLayout() {
 
     try {
       // Read all file contents first
+      console.log("[Bulk Review] Starting with files:", targetFiles);
       const fileContents: {path: string, fileName: string, content: string}[] = [];
       for (const filePath of targetFiles) {
-        const result = await invoke<{path: string, content: string, filename: string}>("read_file_content", { filePath });
-        fileContents.push({ path: filePath, fileName: result.filename, content: result.content });
+        try {
+          console.log("[Bulk Review] Reading file:", filePath);
+          const result = await invoke<{path: string, content: string, filename: string}>("read_file_content", { filePath });
+          console.log("[Bulk Review] Read success:", result.filename, "content length:", result.content.length);
+          fileContents.push({ path: filePath, fileName: result.filename, content: result.content });
+        } catch (readError) {
+          console.error("[Bulk Review] Failed to read file:", filePath, readError);
+        }
       }
+      console.log("[Bulk Review] Total files read:", fileContents.length);
 
       // Analyze each file with AI in parallel (Promise.all with progress tracking)
       let completedCount = 0;
@@ -328,8 +336,17 @@ export function MainLayout() {
 
       const results = await Promise.all(analysisPromises);
       const validResults = results.filter((r): r is NonNullable<typeof r> => r !== null);
+      console.log("[Bulk Review] Valid results:", validResults.length, "of", results.length);
+
+      // Check if we have any valid results
+      if (validResults.length === 0) {
+        console.error("[Bulk Review] No files were successfully analyzed!");
+        alert("エラー: ファイルの分析に失敗しました。コンソールログを確認してください。");
+        return;
+      }
 
       // Analysis complete - enter review mode
+      console.log("[Bulk Review] Entering review mode with", validResults.length, "files");
       setBulkAnalysisProgress(prev => ({ ...prev, isAnalyzing: false }));
       setBulkReviewQueue(validResults);
       setBulkReviewIndex(0);
