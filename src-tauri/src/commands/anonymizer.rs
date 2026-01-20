@@ -252,10 +252,10 @@ pub async fn agent_chat_streaming(
     // let has_purpose = detect_purpose_intent(&messages); // Unused for trigger now
     let planning_intent = detect_planning_intent(&messages);
 
-    // Generate execution plan when user requests bulk execution OR explicitly asks for plan
     let (bulk_plan, workflow_steps) = if is_bulk_request || planning_intent {
         let effective_count = if file_count > 0 { file_count } else { 1 };
-        let estimated_time = (effective_count as u64) * 50;
+        // Estimate 10 seconds per file for LLM processing + overhead
+        let estimated_time = (effective_count as u64) * 10000;
 
         // Extract bullet points from AI response
         let extracted_summary: Vec<String> = ai_response

@@ -70,9 +70,8 @@ interface ConfigSidebarProps {
 }
 
 const MODEL_OPTIONS = [
-  { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
-  { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
-  { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash" },
+  { value: "gemini-3.0-flash", label: "Gemini 3.0 Flash" },
+  { value: "other", label: "Other Model" },
 ];
 
 export function ConfigSidebar({
@@ -107,7 +106,7 @@ export function ConfigSidebar({
   const [inputInfo, setInputInfo] = useState("");
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [taskContext, setTaskContext] = useState("Medical Case Study");
-  const [selectedModel, setSelectedModel] = useState("gemini-3-flash-preview");
+  const [selectedModel, setSelectedModel] = useState("gemini-3.0-flash");
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{ completed: number; total: number; currentFile?: string } | null>(null);
   const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([]);
