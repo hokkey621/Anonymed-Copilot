@@ -1,6 +1,7 @@
 use crate::domain::model::AnonPlan;
 use crate::infrastructure::gemini_handler::GeminiHandler;
 use crate::domain::agent_orchestrator::AgentOrchestrator;
+use crate::domain::skills::{find_matching_skills, get_skill_names, build_prompt_with_skills};
 use crate::utils::plan_apply::apply_plan_to_text;
 use zeroize::Zeroize;
 
@@ -52,6 +53,7 @@ pub struct AgentChatResponse {
     pub bulk_plan: Option<BulkExecutionPlan>,
     pub workflow_steps: Option<Vec<WorkflowStep>>,
     pub suggestions: Option<Vec<String>>,
+    pub applied_skills: Vec<String>,
 }
 
 /// Check if the user message indicates bulk execution intent
@@ -194,6 +196,7 @@ pub async fn agent_chat(
         bulk_plan,
         workflow_steps,
         suggestions,
+        applied_skills: vec![],
     })
 }
 
@@ -225,22 +228,42 @@ pub async fn agent_chat_streaming(
         base_prompt
     };
 
-    // Create history (no need to manually inject system prompt anymore)
+    // Find matching skills based on user's last message
+    let last_user_message = messages.iter().rev().find(|m| m.role == "user").map(|m| m.content.as_str()).unwrap_or("");
+    let matching_skills = find_matching_skills(last_user_message);
+    let skill_names = get_skill_names(&matching_skills);
+
+    // Inject skill context into prompt if any matched
+    let final_prompt = if !matching_skills.is_empty() {
+        build_prompt_with_skills(&system_context, &matching_skills)
+    } else {
+        system_context
+    };
+
+    // Create history
     let history: Vec<Content> = messages.iter().map(|m| Content {
         role: if m.role == "assistant" { "model".to_string() } else { "user".to_string() },
         parts: vec![Part { text: m.content.clone() }],
     }).collect();
 
-    // Emit: Analyzing phase
+    // Emit skill match event if any matched
     use tauri::Emitter;
+    if !skill_names.is_empty() {
+        let _ = app.emit("agent-progress", serde_json::json!({
+            "step": "Skills",
+            "status": "Completed",
+            "message": format!("Matched skills: {}", skill_names.join(", "))
+        }));
+    }
+
+    // Emit: Analyzing phase
     let _ = app.emit("thinking-phase", serde_json::json!({
         "phase": "analyzing",
         "message": "テキストを分析中..."
     }));
 
-    // Use streaming chat
-    // Use streaming chat with system instruction
-    let ai_response = handler.chat_streaming(history, Some(system_context.as_str()), &app).await?;
+    // Use streaming chat with system instruction (including skill context)
+    let ai_response = handler.chat_streaming(history, Some(final_prompt.as_str()), &app).await?;
 
     // Emit: Complete phase
     let _ = app.emit("thinking-phase", serde_json::json!({
@@ -266,7 +289,11 @@ pub async fn agent_chat_streaming(
             .take(5) // Limit to 5 items
             .collect();
 
-        let policy_summary = if !extracted_summary.is_empty() {
+        // Priority: 1. Skill-based summary, 2. AI extracted, 3. Default
+        let skill_summary = crate::domain::skills::get_skill_policy_summary(&matching_skills);
+        let policy_summary = if !skill_summary.is_empty() {
+            skill_summary
+        } else if !extracted_summary.is_empty() {
             extracted_summary
         } else {
             prompts::default_policy_summary()
@@ -292,6 +319,7 @@ pub async fn agent_chat_streaming(
         bulk_plan,
         workflow_steps,
         suggestions,
+        applied_skills: skill_names,
     })
 }
 
@@ -329,6 +357,7 @@ mod tests {
             global_rules: HashMap::new(),
             replacements,
             status: "draft".to_string(),
+            applied_skills: vec![],
         };
 
         let result = apply_plan(original_text, plan).unwrap();
