@@ -578,7 +578,7 @@ export function MainLayout() {
                 isProcessing={isProcessing}
                 currentContent={originalContent}
                 currentPlan={currentPlan}
-                fileCount={folderFiles.filter(f => !f.is_dir).length}
+                fileCount={selectedFilesForBulk.size > 0 ? selectedFilesForBulk.size : folderFiles.filter(f => !f.is_dir).length}
                 currentFileName={activeFile?.filename}
                 currentDirPath={currentFolder?.path}
                 selectedFilePaths={Array.from(selectedFilesForBulk)}
