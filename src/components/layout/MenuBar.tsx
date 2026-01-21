@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect } from "react";
 import { FolderOpen, Folder, Save, FileText, Settings, Key } from "lucide-react";
-import { invoke } from "@tauri-apps/api/core";
 
 
 interface MenuBarProps {
@@ -133,50 +132,6 @@ export function MenuBar({ onOpenFile, onOpenFolder, onSaveFile, onOpenSettings, 
 
       {/* Spacer */}
       <div className="flex-1" />
-
-      {/* Help Menu */}
-      <div className="relative mr-2">
-        <button
-          className={`px-3 py-1 rounded-sm hover:bg-muted transition-colors ${openMenu === "help" ? "bg-muted" : ""}`}
-          onClick={() => handleMenuClick("help")}
-        >
-          Help
-        </button>
-        {openMenu === "help" && (
-          <div className="absolute top-full right-0 mt-0.5 w-56 bg-popover border rounded-md shadow-lg py-1 z-50">
-            <button
-              className="w-full px-3 py-1.5 text-left hover:bg-accent flex items-center gap-2"
-              onClick={() => handleAction(async () => {
-                const url = "https://forms.google.com/your-id-here";
-                try {
-                    await invoke("plugin:opener|open", { path: url });
-                } catch (e) {
-                    console.error("Failed to open URL via plugin:", e);
-                    window.open(url, "_blank");
-                }
-              })}
-            >
-              <FileText size={14} />
-              <span>フィードバックを送る</span>
-            </button>
-            <button
-              className="w-full px-3 py-1.5 text-left hover:bg-accent flex items-center gap-2"
-              onClick={() => handleAction(async () => {
-                 const url = "https://example.com/guide";
-                 try {
-                    await invoke("plugin:opener|open", { path: url });
-                 } catch (e) {
-                    console.error("Failed to open URL via plugin:", e);
-                    window.open(url, "_blank");
-                 }
-              })}
-            >
-              <FolderOpen size={14} />
-              <span>使い方ガイド</span>
-            </button>
-          </div>
-        )}
-      </div>
 
       {/* Current file indicator */}
       {activeFileName && (

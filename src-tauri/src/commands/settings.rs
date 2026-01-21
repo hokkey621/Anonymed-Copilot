@@ -44,15 +44,14 @@ pub async fn load_api_key(app: tauri::AppHandle) -> Result<Option<String>, Strin
     Ok(settings.api_key)
 }
 
-/// Check if API key is configured (either in settings or .env)
+/// Check if API key is configured in settings file
+/// Note: Does NOT check .env - we want first-time users to see the modal
 #[tauri::command]
 pub async fn has_api_key(app: tauri::AppHandle) -> Result<bool, String> {
-    // First check settings file
-    if let Ok(Some(_)) = load_api_key(app).await {
-        return Ok(true);
+    // Only check settings file, not .env
+    // This ensures first-time users see the API key modal
+    if let Ok(Some(key)) = load_api_key(app).await {
+        return Ok(!key.is_empty());
     }
-
-    // Fallback to .env
-    dotenv::dotenv().ok();
-    Ok(std::env::var("GOOGLE_API_KEY").is_ok())
+    Ok(false)
 }
