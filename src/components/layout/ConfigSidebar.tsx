@@ -223,20 +223,7 @@ export function ConfigSidebar({
     const newHistory = [...messages, userMsg];
     let apiMessages = newHistory.map(m => ({ role: m.role, content: m.content }));
 
-    // Only include file content when needed for anonymization plan
-    if (needsFileContent && currentContent && currentContent.trim().length > 0) {
-      if (messages.length === 1) {
-        apiMessages = [
-          messages[0],
-          { role: "user", content: `Context Document:\n${currentContent}\n\nUser Question: ${inputInfo}` }
-        ];
-      } else {
-        const firstUserIndex = apiMessages.findIndex(m => m.role === "user");
-        if (firstUserIndex !== -1) {
-          apiMessages[firstUserIndex].content = `[Document Context]:\n${currentContent}\n\n[User]: ${apiMessages[firstUserIndex].content}`;
-        }
-      }
-    }
+    // NOTE: ファイル内容は editorContent 経由でのみ送信し、二重送信を避ける
 
     try {
       // Start with empty streaming content
@@ -363,13 +350,7 @@ export function ConfigSidebar({
                 const newHistory = [...messages, userMsg];
                 let apiMessages = newHistory.map(m => ({ role: m.role, content: m.content }));
 
-                // Only include file content when needed for anonymization plan
-                if (needsFileContent && currentContent && currentContent.trim().length > 0) {
-                  const firstUserIndex = apiMessages.findIndex(m => m.role === "user");
-                  if (firstUserIndex !== -1) {
-                    apiMessages[firstUserIndex].content = `[Document Context]:\n${currentContent}\n\n[User]: ${apiMessages[firstUserIndex].content}`;
-                  }
-                }
+                // NOTE: ファイル内容は editorContent 経由でのみ送信し、二重送信を避ける
 
                 try {
                   setStreamingContent("");
