@@ -32,7 +32,6 @@ pub fn run() {
             commands::settings::load_api_key,
             commands::settings::has_api_key
         ])
-
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

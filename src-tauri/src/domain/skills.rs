@@ -152,7 +152,10 @@ pub fn find_matching_skills(user_input: &str) -> Vec<&'static LoadedSkill> {
     let mut matches: Vec<(&LoadedSkill, usize)> = skills
         .iter()
         .filter_map(|skill| {
-            let match_count = skill.metadata.keywords.iter()
+            let match_count = skill
+                .metadata
+                .keywords
+                .iter()
                 .filter(|kw| lower_input.contains(&kw.to_lowercase()))
                 .count();
 
@@ -168,7 +171,8 @@ pub fn find_matching_skills(user_input: &str) -> Vec<&'static LoadedSkill> {
     matches.sort_by(|a, b| b.1.cmp(&a.1));
 
     // Return only the skills (without scores), limited to top 2
-    matches.into_iter()
+    matches
+        .into_iter()
         .take(2)
         .map(|(skill, _)| skill)
         .collect()
@@ -187,9 +191,7 @@ pub fn build_prompt_with_skills(base_prompt: &str, skills: &[&LoadedSkill]) -> S
     for skill in skills {
         prompt.push_str(&format!(
             "\n### {} ({})\n{}\n",
-            skill.metadata.name,
-            skill.metadata.description,
-            skill.instructions
+            skill.metadata.name, skill.metadata.description, skill.instructions
         ));
     }
 
@@ -219,7 +221,10 @@ pub fn get_skill_policy_summary(skills: &[&LoadedSkill]) -> Vec<String> {
                 continue;
             }
             // Skip separator row (contains only |, -, :)
-            if trimmed.chars().all(|c| c == '|' || c == '-' || c == ':' || c.is_whitespace()) {
+            if trimmed
+                .chars()
+                .all(|c| c == '|' || c == '-' || c == ':' || c.is_whitespace())
+            {
                 continue;
             }
 

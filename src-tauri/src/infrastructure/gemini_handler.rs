@@ -85,13 +85,21 @@ impl GeminiHandler {
         if api_key.is_empty() {
             return Err("API key cannot be empty".to_string());
         }
-        Ok(Self { client: Self::build_client()?, api_key })
+        Ok(Self {
+            client: Self::build_client()?,
+            api_key,
+        })
     }
 
     /// Create a new handler, trying settings first, then falling back to .env
     pub fn new() -> Result<Self, String> {
-        let api_key = env::var("GOOGLE_API_KEY").map_err(|_| "GOOGLE_API_KEY not set. Please configure your API key in the app settings.".to_string())?;
-        Ok(Self { client: Self::build_client()?, api_key })
+        let api_key = env::var("GOOGLE_API_KEY").map_err(|_| {
+            "GOOGLE_API_KEY not set. Please configure your API key in the app settings.".to_string()
+        })?;
+        Ok(Self {
+            client: Self::build_client()?,
+            api_key,
+        })
     }
 
     /// Create handler from app handle (checks settings file first)
@@ -118,7 +126,10 @@ impl GeminiHandler {
         Self::new()
     }
 
-    async fn send_with_retry(&self, request_body: &GeminiRequest) -> Result<reqwest::Response, String> {
+    async fn send_with_retry(
+        &self,
+        request_body: &GeminiRequest,
+    ) -> Result<reqwest::Response, String> {
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
             GEMINI_MODEL, self.api_key
@@ -128,12 +139,23 @@ impl GeminiHandler {
         let mut retries = 0;
 
         loop {
-            let response = self.client.post(&url).json(request_body).send().await.map_err(|e| e.to_string())?;
+            let response = self
+                .client
+                .post(&url)
+                .json(request_body)
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
 
             if response.status().as_u16() == 503 {
-                if retries >= max_retries { return Err("Gemini API overloaded (503) after max retries".to_string()); }
+                if retries >= max_retries {
+                    return Err("Gemini API overloaded (503) after max retries".to_string());
+                }
                 retries += 1;
-                tokio::time::sleep(std::time::Duration::from_millis(500 * 2_u64.pow(retries - 1))).await;
+                tokio::time::sleep(std::time::Duration::from_millis(
+                    500 * 2_u64.pow(retries - 1),
+                ))
+                .await;
                 continue;
             }
             if !response.status().is_success() {
@@ -161,11 +183,15 @@ impl GeminiHandler {
         let request_body = GeminiRequest {
             contents: vec![Content {
                 role: "user".to_string(),
-                parts: vec![Part { text: full_user_content }],
+                parts: vec![Part {
+                    text: full_user_content,
+                }],
             }],
             system_instruction: Some(SystemInstruction {
                 role: None,
-                parts: vec![Part { text: system_prompt.to_string() }],
+                parts: vec![Part {
+                    text: system_prompt.to_string(),
+                }],
             }),
             generation_config: GenerationConfig {
                 temperature: 0.1,
@@ -180,11 +206,13 @@ impl GeminiHandler {
             if let Some(part) = candidate.content.parts.first() {
                 // Sanitize the JSON text to remove invalid characters
                 let sanitized = Self::sanitize_json_text(&part.text);
-                serde_json::from_str(&sanitized).map_err(|e| {
-                    format!("Failed to parse JSON: {}. Text: {}", e, sanitized)
-                })
+                serde_json::from_str(&sanitized)
+                    .map_err(|e| format!("Failed to parse JSON: {}. Text: {}", e, sanitized))
             } else {
-                Err("No content part in response. The model may have declined to respond.".to_string())
+                Err(
+                    "No content part in response. The model may have declined to respond."
+                        .to_string(),
+                )
             }
         } else {
             Err("No candidates returned from API".to_string())
@@ -242,7 +270,8 @@ impl GeminiHandler {
                     // Filter out non-JSON structural characters outside strings
                     if ch.is_ascii_alphanumeric()
                         || ch.is_ascii_whitespace()
-                        || "{}[],:\".-+eE_".contains(ch) {
+                        || "{}[],:\".-+eE_".contains(ch)
+                    {
                         result.push(ch);
                     }
                     // Skip other characters like random Unicode outside strings
@@ -256,14 +285,23 @@ impl GeminiHandler {
 
     /// Multi-turn chat with history
     /// Accepts optional system_instruction for proper system prompting
-    pub async fn chat(&self, history: Vec<Content>, system_prompt: Option<&str>) -> Result<String, String> {
+    pub async fn chat(
+        &self,
+        history: Vec<Content>,
+        system_prompt: Option<&str>,
+    ) -> Result<String, String> {
         let request_body = GeminiRequest {
             contents: history,
             system_instruction: system_prompt.map(|s| SystemInstruction {
                 role: None,
-                parts: vec![Part { text: s.to_string() }],
+                parts: vec![Part {
+                    text: s.to_string(),
+                }],
             }),
-            generation_config: GenerationConfig { temperature: 0.7, response_mime_type: "text/plain".to_string() },
+            generation_config: GenerationConfig {
+                temperature: 0.7,
+                response_mime_type: "text/plain".to_string(),
+            },
         };
 
         let response = self.send_with_retry(&request_body).await?;
@@ -279,7 +317,12 @@ impl GeminiHandler {
 
     /// Multi-turn chat with streaming via Tauri events
     /// Accepts optional system_instruction for proper system prompting
-    pub async fn chat_streaming(&self, history: Vec<Content>, system_prompt: Option<&str>, app: &tauri::AppHandle) -> Result<String, String> {
+    pub async fn chat_streaming(
+        &self,
+        history: Vec<Content>,
+        system_prompt: Option<&str>,
+        app: &tauri::AppHandle,
+    ) -> Result<String, String> {
         use futures_util::StreamExt;
         use tauri::Emitter;
 
@@ -292,12 +335,18 @@ impl GeminiHandler {
             contents: history,
             system_instruction: system_prompt.map(|s| SystemInstruction {
                 role: None,
-                parts: vec![Part { text: s.to_string() }],
+                parts: vec![Part {
+                    text: s.to_string(),
+                }],
             }),
-            generation_config: GenerationConfig { temperature: 0.7, response_mime_type: "text/plain".to_string() },
+            generation_config: GenerationConfig {
+                temperature: 0.7,
+                response_mime_type: "text/plain".to_string(),
+            },
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .json(&request_body)
             .send()
@@ -325,10 +374,13 @@ impl GeminiHandler {
                                     if let Some(part) = candidate.content.parts.first() {
                                         full_text.push_str(&part.text);
                                         // Emit streaming event
-                                        let _ = app.emit("chat-stream", serde_json::json!({
-                                            "chunk": part.text.clone(),
-                                            "full": full_text.clone()
-                                        }));
+                                        let _ = app.emit(
+                                            "chat-stream",
+                                            serde_json::json!({
+                                                "chunk": part.text.clone(),
+                                                "full": full_text.clone()
+                                            }),
+                                        );
                                     }
                                 }
                             }
@@ -340,9 +392,12 @@ impl GeminiHandler {
         }
 
         // Emit completion event
-        let _ = app.emit("chat-stream-end", serde_json::json!({
-            "full": full_text.clone()
-        }));
+        let _ = app.emit(
+            "chat-stream-end",
+            serde_json::json!({
+                "full": full_text.clone()
+            }),
+        );
 
         Ok(full_text)
     }

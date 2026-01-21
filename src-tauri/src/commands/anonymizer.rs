@@ -1,16 +1,22 @@
-use crate::domain::model::AnonPlan;
-use crate::infrastructure::gemini_handler::GeminiHandler;
 use crate::domain::agent_orchestrator::AgentOrchestrator;
-use crate::domain::skills::{find_matching_skills, get_skill_names, build_prompt_with_skills};
+use crate::domain::model::AnonPlan;
+use crate::domain::skills::{build_prompt_with_skills, find_matching_skills, get_skill_names};
+use crate::infrastructure::gemini_handler::GeminiHandler;
 use crate::utils::plan_apply::apply_plan_to_text;
 use zeroize::Zeroize;
 
 /// Analyze text and generate an anonymization plan using Multi-Agent Orchestrator
 #[tauri::command]
-pub async fn analyze_text(app: tauri::AppHandle, text: String, task_context: String) -> Result<AnonPlan, String> {
+pub async fn analyze_text(
+    app: tauri::AppHandle,
+    text: String,
+    task_context: String,
+) -> Result<AnonPlan, String> {
     let orchestrator = AgentOrchestrator::new(&app)?;
     // The user's input "task_context" here is effectively the prompt for the Planner (e.g. "Vaccine Study")
-    let plan = orchestrator.run_anonymization_pipeline(&app, &text, &task_context).await?;
+    let plan = orchestrator
+        .run_anonymization_pipeline(&app, &text, &task_context)
+        .await?;
     Ok(plan)
 }
 
@@ -18,7 +24,9 @@ pub async fn analyze_text(app: tauri::AppHandle, text: String, task_context: Str
 #[tauri::command]
 pub fn apply_plan(mut text: String, plan: AnonPlan) -> Result<String, String> {
     let processed = apply_plan_to_text(&text, &plan, true)?;
-    unsafe { text.as_mut_vec().zeroize(); }
+    unsafe {
+        text.as_mut_vec().zeroize();
+    }
     Ok(processed)
 }
 
@@ -32,13 +40,23 @@ use crate::infrastructure::gemini_handler::{Content, Part};
 
 /// Conversational chat with AI (supports history)
 #[tauri::command]
-pub async fn chat_with_ai(app: tauri::AppHandle, messages: Vec<ChatMessage>) -> Result<String, String> {
+pub async fn chat_with_ai(
+    app: tauri::AppHandle,
+    messages: Vec<ChatMessage>,
+) -> Result<String, String> {
     let handler = GeminiHandler::from_app(&app)?;
 
-    let history: Vec<Content> = messages.into_iter().map(|m| Content {
-        role: if m.role == "assistant" { "model".to_string() } else { "user".to_string() },
-        parts: vec![Part { text: m.content }],
-    }).collect();
+    let history: Vec<Content> = messages
+        .into_iter()
+        .map(|m| Content {
+            role: if m.role == "assistant" {
+                "model".to_string()
+            } else {
+                "user".to_string()
+            },
+            parts: vec![Part { text: m.content }],
+        })
+        .collect();
 
     handler.chat(history, None).await
 }
@@ -82,13 +100,20 @@ fn detect_purpose_intent(messages: &[ChatMessage]) -> bool {
 fn detect_planning_intent(messages: &[ChatMessage]) -> bool {
     if let Some(last_user_msg) = messages.iter().rev().find(|m| m.role == "user") {
         let content = &last_user_msg.content;
-        return ["計画", "プラン", "作成", "立てて"].iter().any(|kw| content.contains(kw));
+        return ["計画", "プラン", "作成", "立てて"]
+            .iter()
+            .any(|kw| content.contains(kw));
     }
     false
 }
 
 /// Generate contextual suggestions based on conversation state
-fn generate_contextual_suggestions(messages: &[ChatMessage], is_bulk_request: bool, has_purpose: bool, plan_created: bool) -> Option<Vec<String>> {
+fn generate_contextual_suggestions(
+    messages: &[ChatMessage],
+    is_bulk_request: bool,
+    has_purpose: bool,
+    plan_created: bool,
+) -> Option<Vec<String>> {
     use crate::prompts;
 
     // Count user messages to determine conversation phase
@@ -104,7 +129,8 @@ fn generate_contextual_suggestions(messages: &[ChatMessage], is_bulk_request: bo
         let content = &last_user_msg.content;
 
         // Usage questions - provide help suggestions
-        if content.contains("使い方") || content.contains("ヘルプ") || content.contains("help") {
+        if content.contains("使い方") || content.contains("ヘルプ") || content.contains("help")
+        {
             return Some(prompts::help_suggestions());
         }
 
@@ -161,10 +187,19 @@ pub async fn agent_chat(
     };
 
     // Create history (no need to manually inject system prompt anymore)
-    let history: Vec<Content> = messages.iter().map(|m| Content {
-        role: if m.role == "assistant" { "model".to_string() } else { "user".to_string() },
-        parts: vec![Part { text: m.content.clone() }],
-    }).collect();
+    let history: Vec<Content> = messages
+        .iter()
+        .map(|m| Content {
+            role: if m.role == "assistant" {
+                "model".to_string()
+            } else {
+                "user".to_string()
+            },
+            parts: vec![Part {
+                text: m.content.clone(),
+            }],
+        })
+        .collect();
 
     let ai_response = handler.chat(history, Some(system_context.as_str())).await?;
 
@@ -190,7 +225,12 @@ pub async fn agent_chat(
     };
 
     // Generate contextual suggestions based on conversation state
-    let suggestions = generate_contextual_suggestions(&messages, is_bulk_request, has_purpose, bulk_plan.is_some());
+    let suggestions = generate_contextual_suggestions(
+        &messages,
+        is_bulk_request,
+        has_purpose,
+        bulk_plan.is_some(),
+    );
 
     Ok(AgentChatResponse {
         message: ai_response,
@@ -230,7 +270,12 @@ pub async fn agent_chat_streaming(
     };
 
     // Find matching skills based on user's last message
-    let last_user_message = messages.iter().rev().find(|m| m.role == "user").map(|m| m.content.as_str()).unwrap_or("");
+    let last_user_message = messages
+        .iter()
+        .rev()
+        .find(|m| m.role == "user")
+        .map(|m| m.content.as_str())
+        .unwrap_or("");
     let matching_skills = find_matching_skills(last_user_message);
     let skill_names = get_skill_names(&matching_skills);
 
@@ -242,35 +287,55 @@ pub async fn agent_chat_streaming(
     };
 
     // Create history
-    let history: Vec<Content> = messages.iter().map(|m| Content {
-        role: if m.role == "assistant" { "model".to_string() } else { "user".to_string() },
-        parts: vec![Part { text: m.content.clone() }],
-    }).collect();
+    let history: Vec<Content> = messages
+        .iter()
+        .map(|m| Content {
+            role: if m.role == "assistant" {
+                "model".to_string()
+            } else {
+                "user".to_string()
+            },
+            parts: vec![Part {
+                text: m.content.clone(),
+            }],
+        })
+        .collect();
 
     // Emit skill match event if any matched
     use tauri::Emitter;
     if !skill_names.is_empty() {
-        let _ = app.emit("agent-progress", serde_json::json!({
-            "step": "Skills",
-            "status": "Completed",
-            "message": format!("Matched skills: {}", skill_names.join(", "))
-        }));
+        let _ = app.emit(
+            "agent-progress",
+            serde_json::json!({
+                "step": "Skills",
+                "status": "Completed",
+                "message": format!("Matched skills: {}", skill_names.join(", "))
+            }),
+        );
     }
 
     // Emit: Analyzing phase
-    let _ = app.emit("thinking-phase", serde_json::json!({
-        "phase": "analyzing",
-        "message": "テキストを分析中..."
-    }));
+    let _ = app.emit(
+        "thinking-phase",
+        serde_json::json!({
+            "phase": "analyzing",
+            "message": "テキストを分析中..."
+        }),
+    );
 
     // Use streaming chat with system instruction (including skill context)
-    let ai_response = handler.chat_streaming(history, Some(final_prompt.as_str()), &app).await?;
+    let ai_response = handler
+        .chat_streaming(history, Some(final_prompt.as_str()), &app)
+        .await?;
 
     // Emit: Complete phase
-    let _ = app.emit("thinking-phase", serde_json::json!({
-        "phase": "complete",
-        "message": "完了"
-    }));
+    let _ = app.emit(
+        "thinking-phase",
+        serde_json::json!({
+            "phase": "complete",
+            "message": "完了"
+        }),
+    );
 
     // Check if user has expressed anonymization purpose
     // let has_purpose = detect_purpose_intent(&messages); // Unused for trigger now
@@ -284,8 +349,17 @@ pub async fn agent_chat_streaming(
         // Extract bullet points from AI response
         let extracted_summary: Vec<String> = ai_response
             .lines()
-            .filter(|line| line.trim().starts_with("- ") || line.trim().starts_with("・") || line.trim().starts_with("* "))
-            .map(|line| line.trim().trim_start_matches(|c| c == '-' || c == '*' || c == '・').trim().to_string())
+            .filter(|line| {
+                line.trim().starts_with("- ")
+                    || line.trim().starts_with("・")
+                    || line.trim().starts_with("* ")
+            })
+            .map(|line| {
+                line.trim()
+                    .trim_start_matches(|c| c == '-' || c == '*' || c == '・')
+                    .trim()
+                    .to_string()
+            })
             .filter(|s| !s.is_empty())
             .take(5) // Limit to 5 items
             .collect();
@@ -313,7 +387,12 @@ pub async fn agent_chat_streaming(
         (None, None)
     };
 
-    let suggestions = generate_contextual_suggestions(&messages, is_bulk_request, has_purpose, bulk_plan.is_some());
+    let suggestions = generate_contextual_suggestions(
+        &messages,
+        is_bulk_request,
+        has_purpose,
+        bulk_plan.is_some(),
+    );
 
     Ok(AgentChatResponse {
         message: ai_response,

@@ -37,8 +37,7 @@ pub fn bulk_execution_prompt(file_count: usize) -> String {
 - ファイル数と推定処理時間を伝える
 - 「anonymized_outputs」フォルダに出力することを説明する
 - 元データは変更しないことを明確にする"#,
-        AGENT_BASE_PROMPT,
-        file_count
+        AGENT_BASE_PROMPT, file_count
     )
 }
 
@@ -53,8 +52,7 @@ pub fn with_editor_context(base_prompt: &str, content: &str) -> String {
 ```
 
 上記のテキストに含まれる個人情報を簡潔に特定し、推奨される匿名化方法を提案してください。"#,
-        base_prompt,
-        content
+        base_prompt, content
     )
 }
 
@@ -71,13 +69,32 @@ pub fn default_policy_summary() -> Vec<String> {
 
 /// Keywords for intent detection
 pub const BULK_KEYWORDS: &[&str] = &[
-    "全件", "全て", "すべて", "一括", "バルク", "まとめて",
-    "apply to all", "bulk", "all files", "batch"
+    "全件",
+    "全て",
+    "すべて",
+    "一括",
+    "バルク",
+    "まとめて",
+    "apply to all",
+    "bulk",
+    "all files",
+    "batch",
 ];
 
 pub const PURPOSE_KEYWORDS: &[&str] = &[
-    "ワクチン", "教材", "教育", "症例報告", "研究", "開発用", "作成用",
-    "学会", "論文", "公開", "データ分析", "計画を立てて", "実行して"
+    "ワクチン",
+    "教材",
+    "教育",
+    "症例報告",
+    "研究",
+    "開発用",
+    "作成用",
+    "学会",
+    "論文",
+    "公開",
+    "データ分析",
+    "計画を立てて",
+    "実行して",
 ];
 
 /// Suggestion chips
@@ -131,13 +148,17 @@ pub fn default_workflow_steps(parallel_execution: bool) -> Vec<WorkflowStep> {
         },
         WorkflowStep {
             id: "execution".to_string(),
-            label: if parallel_execution { "Parallel Execution".to_string() } else { "Execution".to_string() },
+            label: if parallel_execution {
+                "Parallel Execution".to_string()
+            } else {
+                "Execution".to_string()
+            },
             status: "pending".to_string(),
         },
         WorkflowStep {
             id: "audit".to_string(),
             label: "Audit Log Generation".to_string(),
             status: "pending".to_string(),
-        }
+        },
     ]
 }

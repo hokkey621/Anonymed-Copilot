@@ -1,6 +1,10 @@
 use crate::domain::model::AnonPlan;
 
-pub fn apply_plan_to_text(text: &str, plan: &AnonPlan, error_on_missing: bool) -> Result<String, String> {
+pub fn apply_plan_to_text(
+    text: &str,
+    plan: &AnonPlan,
+    error_on_missing: bool,
+) -> Result<String, String> {
     let mut replacements = plan.replacements.clone();
     replacements.sort_by(|a, b| b.start.cmp(&a.start));
 
@@ -27,9 +31,7 @@ pub fn apply_plan_to_text(text: &str, plan: &AnonPlan, error_on_missing: bool) -
             }
         };
 
-        if end <= processed.len()
-            && processed.get(suggested_start..end) == Some(original_target)
-        {
+        if end <= processed.len() && processed.get(suggested_start..end) == Some(original_target) {
             processed.replace_range(suggested_start..end, &item.replacement);
         } else {
             let mut best_start = None;
@@ -45,11 +47,17 @@ pub fn apply_plan_to_text(text: &str, plan: &AnonPlan, error_on_missing: bool) -
 
             match best_start {
                 Some(actual_start) => {
-                    processed.replace_range(actual_start..actual_start + original_target.len(), &item.replacement);
+                    processed.replace_range(
+                        actual_start..actual_start + original_target.len(),
+                        &item.replacement,
+                    );
                 }
                 None => {
                     if error_on_missing {
-                        return Err(format!("Could not find original text '{}' in document.", original_target));
+                        return Err(format!(
+                            "Could not find original text '{}' in document.",
+                            original_target
+                        ));
                     }
                 }
             }

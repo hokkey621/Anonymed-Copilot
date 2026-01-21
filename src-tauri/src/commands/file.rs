@@ -1,13 +1,13 @@
-use serde::Serialize;
-use std::fs;
-use std::path::Path;
-use tauri_plugin_dialog::DialogExt;
-use chrono::Local;
-use sha2::{Sha256, Digest};
-use hex;
-use tauri::State;
 use crate::utils::access_control::{AccessControl, AccessSnapshot};
 use crate::utils::file_reader::read_file_with_encoding;
+use chrono::Local;
+use hex;
+use serde::Serialize;
+use sha2::{Digest, Sha256};
+use std::fs;
+use std::path::Path;
+use tauri::State;
+use tauri_plugin_dialog::DialogExt;
 
 /// Response from open_file command
 #[derive(Serialize)]
@@ -29,7 +29,8 @@ pub async fn open_file(
     app: tauri::AppHandle,
     access_control: State<'_, AccessControl>,
 ) -> Result<Option<OpenFileResult>, String> {
-    let file_path = app.dialog()
+    let file_path = app
+        .dialog()
         .file()
         .add_filter("Text Files", &["txt", "csv", "json", "md", "log"])
         .add_filter("All Files", &["*"])
@@ -39,7 +40,9 @@ pub async fn open_file(
         return Ok(None); // User cancelled
     };
 
-    let path_buf = path.into_path().map_err(|e| format!("Invalid path: {:?}", e))?;
+    let path_buf = path
+        .into_path()
+        .map_err(|e| format!("Invalid path: {:?}", e))?;
     let parent_dir = path_buf
         .parent()
         .ok_or_else(|| "Invalid path: no parent directory".to_string())?
@@ -86,7 +89,8 @@ pub async fn save_anonymized_file(
         format!("{}_anonymized", original_filename)
     };
 
-    let save_path = app.dialog()
+    let save_path = app
+        .dialog()
         .file()
         .set_file_name(&default_name)
         .add_filter("Text Files", &["txt", "csv", "json", "md"])
@@ -97,12 +101,13 @@ pub async fn save_anonymized_file(
         return Ok(None); // User cancelled
     };
 
-    let path_buf = path.into_path().map_err(|e| format!("Invalid path: {:?}", e))?;
+    let path_buf = path
+        .into_path()
+        .map_err(|e| format!("Invalid path: {:?}", e))?;
     let path_buf = access_control.ensure_allowed(&path_buf)?;
 
     // Save the anonymized content
-    fs::write(&path_buf, &content)
-        .map_err(|e| format!("Failed to save file: {}", e))?;
+    fs::write(&path_buf, &content).map_err(|e| format!("Failed to save file: {}", e))?;
 
     // Generate audit log in the same directory
     let audit_log_path = path_buf.with_extension("audit.json");
@@ -151,15 +156,15 @@ pub async fn open_folder(
     app: tauri::AppHandle,
     access_control: State<'_, AccessControl>,
 ) -> Result<Option<OpenFolderResult>, String> {
-    let folder_path = app.dialog()
-        .file()
-        .blocking_pick_folder();
+    let folder_path = app.dialog().file().blocking_pick_folder();
 
     let Some(path) = folder_path else {
         return Ok(None); // User cancelled
     };
 
-    let path_buf = path.into_path().map_err(|e| format!("Invalid path: {:?}", e))?;
+    let path_buf = path
+        .into_path()
+        .map_err(|e| format!("Invalid path: {:?}", e))?;
 
     access_control.set_base_dir(path_buf.clone())?;
     let snapshot = access_control.snapshot()?;
@@ -192,8 +197,7 @@ fn collect_files_recursive(
         return Ok(());
     }
 
-    let entries = fs::read_dir(dir)
-        .map_err(|e| format!("Failed to read directory: {}", e))?;
+    let entries = fs::read_dir(dir).map_err(|e| format!("Failed to read directory: {}", e))?;
 
     for entry in entries {
         let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
@@ -205,7 +209,8 @@ fn collect_files_recursive(
         if snapshot.ensure_within_base(&path).is_err() {
             continue;
         }
-        let filename = path.file_name()
+        let filename = path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("")
             .to_string();

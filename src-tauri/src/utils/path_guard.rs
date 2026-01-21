@@ -99,7 +99,11 @@ impl SimpleGitignore {
 
         let mut ignored = false;
         for rule in &self.rules {
-            let target = if rule.has_slash { &relative_str } else { filename };
+            let target = if rule.has_slash {
+                &relative_str
+            } else {
+                filename
+            };
             if matches_rule(rule, target, &relative_str) {
                 ignored = !rule.negated;
             }
