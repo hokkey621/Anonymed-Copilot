@@ -1,0 +1,76 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest'
+            args: '--target aarch64-apple-darwin'
+          - platform: 'macos-latest'
+            args: '--target x86_64-apple-darwin'
+          - platform: 'windows-latest'
+            args: ''
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Install dependencies (macOS)
+        if: matrix.platform == 'macos-latest'
+        run: |
+          rustup target add aarch64-apple-darwin
+          rustup target add x86_64-apple-darwin
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Note: API key is NOT embedded. Users will enter their own key on first launch.
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Anonymed Copilot ${{ github.ref_name }}'
+          releaseBody: |
+            ## ダウンロード
+
+            | OS | ファイル |
+            |----|----------|
+            | macOS (Apple Silicon) | `.dmg` (aarch64) |
+            | macOS (Intel) | `.dmg` (x86_64) |
+            | Windows | `.exe` または `.msi` |
+
+            ## 初回セットアップ
+
+            1. アプリをダウンロードして起動
+            2. [Google AI Studio](https://aistudio.google.com/apikey) でAPIキーを取得（無料）
+            3. アプリにAPIキーを入力
+
+            詳細は [README](https://github.com/${{ github.repository }}#readme) を参照してください。
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}

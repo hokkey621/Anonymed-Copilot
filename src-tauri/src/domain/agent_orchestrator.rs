@@ -39,8 +39,8 @@ pub struct AgentOrchestrator {
 }
 
 impl AgentOrchestrator {
-    pub fn new() -> Result<Self, String> {
-        let handler = GeminiHandler::new()?;
+    pub fn new(app: &tauri::AppHandle) -> Result<Self, String> {
+        let handler = GeminiHandler::from_app(app)?;
         Ok(Self { handler })
     }
 

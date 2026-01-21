@@ -1,16 +1,17 @@
 import { useState, useRef, useEffect } from "react";
-import { FolderOpen, Folder, Save, FileText } from "lucide-react";
+import { FolderOpen, Folder, Save, FileText, Settings, Key } from "lucide-react";
 
 
 interface MenuBarProps {
   onOpenFile: () => void;
   onOpenFolder: () => void;
   onSaveFile: () => void;
+  onOpenSettings?: () => void;
   activeFileName?: string;
   hasUnsavedChanges?: boolean;
 }
 
-export function MenuBar({ onOpenFile, onOpenFolder, onSaveFile, activeFileName, hasUnsavedChanges }: MenuBarProps) {
+export function MenuBar({ onOpenFile, onOpenFolder, onSaveFile, onOpenSettings, activeFileName, hasUnsavedChanges }: MenuBarProps) {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -103,6 +104,28 @@ export function MenuBar({ onOpenFile, onOpenFolder, onSaveFile, activeFileName, 
             <div className="px-3 py-1.5 text-muted-foreground text-xs">
               編集機能は準備中です
             </div>
+          </div>
+        )}
+      </div>
+
+      {/* Settings Menu */}
+      <div className="relative">
+        <button
+          className={`px-3 py-1 rounded-sm hover:bg-muted transition-colors ${openMenu === "settings" ? "bg-muted" : ""}`}
+          onClick={() => handleMenuClick("settings")}
+        >
+          <Settings size={14} className="inline mr-1" />
+          Settings
+        </button>
+        {openMenu === "settings" && (
+          <div className="absolute top-full left-0 mt-0.5 w-56 bg-popover border rounded-md shadow-lg py-1 z-50">
+            <button
+              className="w-full px-3 py-1.5 text-left hover:bg-accent flex items-center gap-2"
+              onClick={() => handleAction(() => onOpenSettings?.())}
+            >
+              <Key size={14} />
+              <span>APIキー設定</span>
+            </button>
           </div>
         )}
       </div>

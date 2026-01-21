@@ -33,7 +33,7 @@ export function BulkPlanCard({ plan, onCommit, isExecuting, progress }: BulkPlan
     <div className="rounded-md border bg-muted/30 text-sm">
       {/* Header */}
       <div className="px-3 py-2 border-b bg-muted/50 flex items-center justify-between">
-        <span className="font-medium">一括実行</span>
+        <span className="font-medium">確認と実行</span>
         <span className="text-xs text-muted-foreground">
           {plan.target_count} ファイル · 約{estimatedSeconds}秒
         </span>
@@ -74,7 +74,7 @@ export function BulkPlanCard({ plan, onCommit, isExecuting, progress }: BulkPlan
               実行中...
             </>
           ) : (
-            '一括実行を開始'
+            '匿名化を実行'
           )}
         </Button>
       </div>

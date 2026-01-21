@@ -1,24 +1,54 @@
 # Anonymed Copilot
 
-医療文書の匿名化を支援するデスクトップアプリケーション。Gemini APIを活用したAIアシスタントが、個人情報の検出と置換をサポートします。
+医療文書の個人情報を安全に匿名化するデスクトップアプリケーションです。
+AIが自動で個人情報を検出し、適切な形式に置き換えます。
 
 ![Tauri](https://img.shields.io/badge/Tauri-2.0-blue)
 ![React](https://img.shields.io/badge/React-19-61DAFB)
-![Rust](https://img.shields.io/badge/Rust-1.70+-orange)
+![License](https://img.shields.io/badge/License-Apache%202.0-green)
 
-## 特徴
+---
 
-- **AI匿名化**: Gemini 2.5 Flash APIによる高精度な個人情報検出
-- **Diff表示**: 変更前後を並べて確認できるエディタ
-- **コンテキストチャット**: 文書についてAIに相談可能
-- **一括処理**: フォルダ配下のファイルをまとめて匿名化
-- **セキュア**: 元テキストのメモリゼロ化による安全な処理
+## 🚀 すぐに試す（初心者向け）
 
-## スクリーンショット
+### 1. アプリをダウンロード
 
-<!-- TODO: Add screenshot -->
+[GitHub Releases](https://github.com/your-repo/releases) から、お使いのOSに合わせたファイルをダウンロードしてください：
 
-## セットアップ
+| OS | ファイル |
+|----|----------|
+| macOS | `Anonymed-Copilot_x.x.x_aarch64.dmg` または `.app` |
+| Windows | `Anonymed-Copilot_x.x.x_x64-setup.exe` |
+
+### 2. APIキーを取得（無料）
+
+このアプリはGoogle Gemini APIを使用しています。無料で取得できます。
+
+1. [Google AI Studio](https://aistudio.google.com/apikey) にアクセス
+2. Googleアカウントでログイン
+3. 「Get API key」→「Create API key」をクリック
+4. 表示されたキーをコピー
+
+> 💡 **無料枠について**: Gemini APIは無料枠が十分にあり、通常の利用であれば料金は発生しません。
+
+### 3. アプリを起動
+
+1. ダウンロードしたアプリを開く
+2. 初回起動時にAPIキー入力画面が表示される
+3. 取得したキーを貼り付けて「保存して開始」
+
+### 4. 使い方
+
+1. **ファイルを開く**: メニュー「File」>「ファイルを開く」でテキストファイルを選択
+2. **チャットで指示**: 右側のチャット欄で「匿名化して」「ワクチン開発用に匿名化して」などと入力
+3. **確認**: AIが提案した変更箇所を確認し、必要に応じて修正
+4. **保存**: 「変更を適用して保存」で匿名化されたファイルを保存
+
+---
+
+## 🛠 開発者向けセットアップ
+
+ソースコードから実行したい場合はこちら：
 
 ### 前提条件
 
@@ -29,12 +59,9 @@
 ### インストール
 
 ```bash
-# 依存関係のインストール
+git clone https://github.com/your-repo/Anonymed-Copilot.git
+cd Anonymed-Copilot
 npm install
-
-# 環境変数の設定
-cp src-tauri/.env.example src-tauri/.env
-# .env に GOOGLE_API_KEY と ANONYMED_HMAC_KEY を設定
 ```
 
 ### 開発サーバー起動
@@ -43,19 +70,24 @@ cp src-tauri/.env.example src-tauri/.env
 npm run tauri dev
 ```
 
+> ⚠️ 開発モードでは、`src-tauri/.env` に `GOOGLE_API_KEY=your-key` を設定するか、アプリ起動後にUIから設定してください。
+
 ### ビルド
 
 ```bash
 npm run tauri build
 ```
 
-## 使い方
+---
 
-1. **ファイル/フォルダを開く**: 左サイドバーからファイルまたはフォルダを選択
-2. **AI相談**: 右サイドバーのチャットで「どこを匿名化すべき？」などと質問
-3. **匿名化実行**: 「Run Anonymization」ボタンをクリック
-4. **確認・適用**: Diffエディタで変更を確認し、「Apply Changes」で確定
-5. **一括処理**: チャットで「全件に適用して」と送信 → 実行で `anonymized_outputs` に出力
+## 📝 フィードバック
+
+ユーザーテストにご協力いただきありがとうございます！
+ご意見・ご感想は以下のフォームからお寄せください：
+
+👉 [フィードバックフォーム](https://forms.google.com/your-id-here)
+
+---
 
 ## 技術スタック
 
@@ -63,21 +95,8 @@ npm run tauri build
 |---------|------|
 | Frontend | React 19, TypeScript, Tailwind CSS, Monaco Editor |
 | Backend | Rust, Tauri 2.0 |
-| AI | Google Gemini 2.5 Flash API |
-
-## プロジェクト構造
-
-```
-src/                    # React Frontend
-├── components/layout/  # UI Components (MainLayout, EditorPanel, etc.)
-└── lib/               # Utilities
-
-src-tauri/             # Rust Backend
-├── src/commands/      # Tauri Commands (anonymizer, audit, batch)
-├── src/infrastructure/# External APIs (GeminiHandler)
-└── src/domain/        # Domain Models
-```
+| AI | Google Gemini API |
 
 ## ライセンス
 
-MIT License
+Apache License 2.0 - 詳細は [LICENSE](./LICENSE) を参照してください。
