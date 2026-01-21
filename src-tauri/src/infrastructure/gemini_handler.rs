@@ -56,6 +56,7 @@ struct Candidate {
 
 #[derive(Deserialize)]
 struct ContentResponse {
+    #[serde(default)]
     parts: Vec<PartResponse>,
 }
 
@@ -144,10 +145,10 @@ impl GeminiHandler {
                     format!("Failed to parse JSON: {}. Text: {}", e, sanitized)
                 })
             } else {
-                Err("No content part in candidate".to_string())
+                Err("No content part in response. The model may have declined to respond.".to_string())
             }
         } else {
-            Err("No candidates returned".to_string())
+            Err("No candidates returned from API".to_string())
         }
     }
 
@@ -234,7 +235,7 @@ impl GeminiHandler {
                 return Ok(part.text.clone());
             }
         }
-        Err("No content generated".to_string())
+        Err("No content generated. The model may have declined to respond.".to_string())
     }
 
     /// Multi-turn chat with streaming via Tauri events

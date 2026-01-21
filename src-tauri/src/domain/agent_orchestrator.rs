@@ -1,4 +1,5 @@
 use crate::domain::model::{AnonPlan, ReplacementEntry};
+use crate::domain::skills::{find_matching_skills, build_prompt_with_skills, get_skill_names};
 use tauri::{AppHandle, Emitter};
 use crate::infrastructure::gemini_handler::GeminiHandler;
 use serde::{Deserialize, Serialize};
@@ -45,8 +46,9 @@ impl AgentOrchestrator {
 
     /// Step 1: Planner Agent
     /// Decides HOW to anonymize based on user input (task_name) and the text content.
-    pub async fn plan_strategy(&self, task_name: &str, text_preview: &str) -> Result<AnonymizationStrategy, String> {
-        let system_prompt = r#"
+    /// Enhanced with skill-based domain knowledge injection.
+    pub async fn plan_strategy(&self, task_name: &str, text_preview: &str, matching_skills: &[&crate::domain::skills::LoadedSkill]) -> Result<AnonymizationStrategy, String> {
+        let base_prompt = r#"
         You are a Senior Privacy Architect. Your job is to design an Anonymization Strategy.
         Analyze the task name and the provided text preview.
         Determine:
@@ -65,11 +67,14 @@ impl AgentOrchestrator {
         }
         "#;
 
+        // Inject skill-based domain knowledge into the prompt
+        let system_prompt = build_prompt_with_skills(base_prompt, matching_skills);
+
         let user_prompt = format!("Task: {}\n\nText Preview (first 1000 chars):\n{}", task_name, text_preview);
 
         self.handler.generate_structure::<AnonymizationStrategy>(
             &user_prompt,
-            system_prompt,
+            &system_prompt,
             None
         ).await
     }
@@ -118,9 +123,22 @@ impl AgentOrchestrator {
     /// For this version, we will just use it to validate/refine if needed, but to keep latency down we might skip unless requested.
     /// Let's implement a simple "Self-Correction" pass if the plan seems empty or too aggressive, but for now we'll skip to keep it simple.
 
-    /// Main Orchestratration Function
+    /// Main Orchestration Function
+    /// Enhanced with skill-based domain knowledge injection
     pub async fn run_anonymization_pipeline(&self, app: &AppHandle, text: &str, user_task_input: &str) -> Result<AnonPlan, String> {
-        // 1. Plan
+        // 0. Find matching skills based on user input
+        let matching_skills = find_matching_skills(user_task_input);
+        let skill_names = get_skill_names(&matching_skills);
+
+        if !matching_skills.is_empty() {
+            let _ = app.emit("agent-progress", AgentProgressEvent {
+                step: "Skills".to_string(),
+                status: "Completed".to_string(),
+                message: format!("Matched skills: {}", skill_names.join(", ")),
+            });
+        }
+
+        // 1. Plan (with skill context)
         let _ = app.emit("agent-progress", AgentProgressEvent {
             step: "Planner".to_string(),
             status: "In Progress".to_string(),
@@ -128,7 +146,7 @@ impl AgentOrchestrator {
         });
 
         let preview = text.chars().take(1000).collect::<String>();
-        let strategy = self.plan_strategy(user_task_input, &preview).await;
+        let strategy = self.plan_strategy(user_task_input, &preview, &matching_skills).await;
 
         let strategy = match strategy {
             Ok(s) => {
@@ -177,12 +195,13 @@ impl AgentOrchestrator {
              }
         };
 
-        // 3. Assemble Result
+        // 3. Assemble Result (with applied skills)
         Ok(AnonPlan {
             task_name: strategy.task_context,
             global_rules: HashMap::new(),
             replacements,
             status: "draft".to_string(),
+            applied_skills: skill_names,
         })
     }
 }

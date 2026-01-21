@@ -27,6 +27,8 @@ pub struct AnonPlan {
     pub global_rules: HashMap<String, Value>,
     pub replacements: Vec<ReplacementEntry>,
     pub status: String, // "draft" | "approved"
+    #[serde(default)]
+    pub applied_skills: Vec<String>, // Names of skills that were applied
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
