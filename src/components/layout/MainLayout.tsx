@@ -1,7 +1,7 @@
 import { AnonPlan } from "@/domain/model";
 import { createDefaultPlan } from "@/domain/utils";
 import { invoke } from "@tauri-apps/api/core";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ConfigSidebar } from "./ConfigSidebar";
 import { EditorPanel } from "./EditorPanel";
 import { FileExplorer, OpenedFile } from "./FileExplorer";
@@ -9,6 +9,7 @@ import { MenuBar } from "./MenuBar";
 import { StatusBar } from "./StatusBar";
 import { EditorTabs } from "@/components/editor/EditorTabs";
 import { ResizablePanel } from "@/components/ui/ResizablePanel";
+import { ApiKeyModal } from "@/components/ui/ApiKeyModal";
 
 interface OpenFileResult {
   path: string;
@@ -57,6 +58,27 @@ export function MainLayout() {
   const [bulkApprovedResults, setBulkApprovedResults] = useState<Map<string, {fileName: string, content: string, status: 'approved' | 'skipped' | 'pending'}>>(new Map());
   // Analysis progress (for parallel processing)
   const [bulkAnalysisProgress, setBulkAnalysisProgress] = useState<{completed: number; total: number; isAnalyzing: boolean}>({completed: 0, total: 0, isAnalyzing: false});
+
+  // API Key modal state
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  const [_hasApiKey, setHasApiKey] = useState(true); // Assume true initially
+
+  // Check for API key on mount
+  useEffect(() => {
+    const checkApiKey = async () => {
+      try {
+        const hasKey = await invoke<boolean>("has_api_key");
+        setHasApiKey(hasKey);
+        if (!hasKey) {
+          setShowApiKeyModal(true);
+        }
+      } catch (e) {
+        console.error("Failed to check API key:", e);
+        setShowApiKeyModal(true);
+      }
+    };
+    checkApiKey();
+  }, []);
 
   const activeFile = openedFiles.find(f => f.path === activeFilePath) || null;
 
@@ -484,6 +506,7 @@ export function MainLayout() {
         onOpenFile={handleOpenFile}
         onOpenFolder={handleOpenFolder}
         onSaveFile={handleSaveFile}
+        onOpenSettings={() => setShowApiKeyModal(true)}
         activeFileName={activeFile?.filename}
         hasUnsavedChanges={hasUnsavedChanges}
       />
@@ -581,6 +604,16 @@ export function MainLayout() {
       </div>
 
       <StatusBar />
+
+      {/* API Key Modal */}
+      <ApiKeyModal
+        isOpen={showApiKeyModal}
+        onClose={() => setShowApiKeyModal(false)}
+        onSave={(_key) => {
+          setHasApiKey(true);
+          console.log("API key saved");
+        }}
+      />
     </div>
   );
 }

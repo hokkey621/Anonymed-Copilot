@@ -73,10 +73,43 @@ pub struct GeminiHandler {
 const GEMINI_MODEL: &str = "gemini-3-flash-preview";
 
 impl GeminiHandler {
+    /// Create a new handler with an explicit API key
+    pub fn with_api_key(api_key: String) -> Result<Self, String> {
+        if api_key.is_empty() {
+            return Err("API key cannot be empty".to_string());
+        }
+        Ok(Self { client: Client::new(), api_key })
+    }
+
+    /// Create a new handler, trying settings first, then falling back to .env
     pub fn new() -> Result<Self, String> {
         dotenv().ok();
-        let api_key = env::var("GOOGLE_API_KEY").map_err(|_| "GOOGLE_API_KEY not set".to_string())?;
+        let api_key = env::var("GOOGLE_API_KEY").map_err(|_| "GOOGLE_API_KEY not set. Please configure your API key in the app settings.".to_string())?;
         Ok(Self { client: Client::new(), api_key })
+    }
+
+    /// Create handler from app handle (checks settings file first)
+    pub fn from_app(app: &tauri::AppHandle) -> Result<Self, String> {
+        use tauri::Manager;
+
+        // Try to load from settings file first
+        if let Ok(app_data_dir) = app.path().app_data_dir() {
+            let settings_path = app_data_dir.join("settings.json");
+            if settings_path.exists() {
+                if let Ok(content) = std::fs::read_to_string(&settings_path) {
+                    if let Ok(settings) = serde_json::from_str::<serde_json::Value>(&content) {
+                        if let Some(api_key) = settings.get("api_key").and_then(|v| v.as_str()) {
+                            if !api_key.is_empty() {
+                                return Self::with_api_key(api_key.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback to environment variable
+        Self::new()
     }
 
     async fn send_with_retry(&self, request_body: &GeminiRequest) -> Result<reqwest::Response, String> {

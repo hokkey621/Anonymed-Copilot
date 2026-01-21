@@ -8,7 +8,7 @@ use zeroize::Zeroize;
 /// Analyze text and generate an anonymization plan using Multi-Agent Orchestrator
 #[tauri::command]
 pub async fn analyze_text(app: tauri::AppHandle, text: String, task_context: String) -> Result<AnonPlan, String> {
-    let orchestrator = AgentOrchestrator::new()?;
+    let orchestrator = AgentOrchestrator::new(&app)?;
     // The user's input "task_context" here is effectively the prompt for the Planner (e.g. "Vaccine Study")
     let plan = orchestrator.run_anonymization_pipeline(&app, &text, &task_context).await?;
     Ok(plan)
@@ -32,8 +32,8 @@ use crate::infrastructure::gemini_handler::{Content, Part};
 
 /// Conversational chat with AI (supports history)
 #[tauri::command]
-pub async fn chat_with_ai(messages: Vec<ChatMessage>) -> Result<String, String> {
-    let handler = GeminiHandler::new()?;
+pub async fn chat_with_ai(app: tauri::AppHandle, messages: Vec<ChatMessage>) -> Result<String, String> {
+    let handler = GeminiHandler::from_app(&app)?;
 
     let history: Vec<Content> = messages.into_iter().map(|m| Content {
         role: if m.role == "assistant" { "model".to_string() } else { "user".to_string() },
@@ -136,11 +136,12 @@ fn generate_contextual_suggestions(messages: &[ChatMessage], is_bulk_request: bo
 /// Enhanced agent chat that supports bulk execution planning
 #[tauri::command]
 pub async fn agent_chat(
+    app: tauri::AppHandle,
     messages: Vec<ChatMessage>,
     file_count: usize,
     editor_content: Option<String>,
 ) -> Result<AgentChatResponse, String> {
-    let handler = GeminiHandler::new()?;
+    let handler = GeminiHandler::from_app(&app)?;
 
     let is_bulk_request = detect_bulk_intent(&messages);
 
@@ -208,7 +209,7 @@ pub async fn agent_chat_streaming(
     file_count: usize,
     editor_content: Option<String>,
 ) -> Result<AgentChatResponse, String> {
-    let handler = GeminiHandler::new()?;
+    let handler = GeminiHandler::from_app(&app)?;
 
     let is_bulk_request = detect_bulk_intent(&messages);
     let has_purpose = detect_purpose_intent(&messages);

@@ -26,7 +26,10 @@ pub fn run() {
             commands::file::open_file,
             commands::file::open_folder,
             commands::file::read_file_content,
-            commands::file::save_anonymized_file
+            commands::file::save_anonymized_file,
+            commands::settings::save_api_key,
+            commands::settings::load_api_key,
+            commands::settings::has_api_key
         ])
 
         .run(tauri::generate_context!())

@@ -302,7 +302,7 @@ pub async fn process_bulk(
     }
 
     // 1. Initialize Orchestrator
-    let orchestrator = AgentOrchestrator::new()?;
+    let orchestrator = AgentOrchestrator::new(&app)?;
 
     // 2. List files
     let entries: Vec<_> = fs::read_dir(path)
