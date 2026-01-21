@@ -7,7 +7,7 @@ import { ChatMessage } from "@/components/chat/ChatMessage";
 import { BulkPlanCard } from "@/components/chat/BulkPlanCard";
 import { SuggestionChips } from "@/components/chat/SuggestionChips";
 import { AgentProgressEvent } from "./ProgressIndicator";
-import { Send, ChevronDown, FileText, Loader2 } from "lucide-react";
+import { Send, ChevronDown, FileText, Loader2, Sparkles } from "lucide-react";
 
 interface Message {
   role: "user" | "assistant";
@@ -134,9 +134,33 @@ export function ConfigSidebar({
     return cleaned.trim();
   };
 
-  // Listen for agent progress
+  // Keywords that indicate file content should be sent to the LLM
+  const FILE_CONTENT_KEYWORDS = [
+    "計画を立てて", "実行して", "一括", "全件", "全て", "すべて",
+    // スキル関連のキーワードでもファイルコンテンツを渡す
+    "ワクチン", "vaccine", "教材", "教育", "症例", "研究", "開発用", "作成用",
+    "学会", "論文", "匿名化", "確認", "変更"
+  ];
+
+  // Helper to check if a message needs file content
+  const checkNeedsFileContent = (text: string): boolean => {
+    return FILE_CONTENT_KEYWORDS.some(kw => text.includes(kw));
+  };
+
+  const [activeSkills, setActiveSkills] = useState<string[]>([]);
+
+  // Listen for agent progress (including skill matching)
   useEffect(() => {
-    const unlisten = listen<AgentProgressEvent>("agent-progress", () => {});
+    const unlisten = listen<AgentProgressEvent>("agent-progress", (event) => {
+      // Track matched skills from the Skills step
+      if (event.payload.step === "Skills" && event.payload.status === "Completed") {
+        const match = event.payload.message.match(/Matched skills: (.+)/);
+        if (match) {
+          const skills = match[1].split(", ").map(s => s.trim());
+          setActiveSkills(skills);
+        }
+      }
+    });
     return () => { unlisten.then(f => f()); };
   }, []);
 
@@ -194,11 +218,7 @@ export function ConfigSidebar({
     setInputInfo("");
     setIsChatLoading(true);
 
-    // Check if this message requires file content (only for plan creation/execution)
-    const needsContentKeywords = [
-      "計画を立てて", "実行して", "一括", "全件", "全て", "すべて"
-    ];
-    const needsFileContent = needsContentKeywords.some(kw => inputInfo.includes(kw));
+    const needsFileContent = checkNeedsFileContent(inputInfo);
 
     const newHistory = [...messages, userMsg];
     let apiMessages = newHistory.map(m => ({ role: m.role, content: m.content }));
@@ -338,11 +358,7 @@ export function ConfigSidebar({
                 setMessages(prev => [...prev, userMsg]);
                 setIsChatLoading(true);
 
-                // Check if this suggestion requires file content (only for plan creation/execution)
-                const needsContentKeywords = [
-                  "計画を立てて", "実行して", "一括", "全件", "全て", "すべて"
-                ];
-                const needsFileContent = needsContentKeywords.some(kw => text.includes(kw));
+                const needsFileContent = checkNeedsFileContent(text);
 
                 const newHistory = [...messages, userMsg];
                 let apiMessages = newHistory.map(m => ({ role: m.role, content: m.content }));
@@ -515,6 +531,24 @@ export function ConfigSidebar({
 
       {/* Footer: File indicator + Input */}
       <div className="border-t p-3 space-y-2">
+        {/* Active Skills indicator */}
+        {activeSkills.length > 0 && (
+          <div className="flex items-center gap-2 text-xs bg-purple-500/10 px-2 py-1.5 rounded border border-purple-500/20">
+            <Sparkles size={12} className="text-purple-500" />
+            <span className="text-purple-700 dark:text-purple-300">適用中のスキル:</span>
+            <div className="flex gap-1 flex-wrap">
+              {activeSkills.map(skill => (
+                <span
+                  key={skill}
+                  className="bg-purple-500/20 text-purple-700 dark:text-purple-300 px-1.5 py-0.5 rounded text-xs font-medium"
+                >
+                  {skill}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Target file indicator */}
         {(currentFileName || currentContent) && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 px-2 py-1.5 rounded">
