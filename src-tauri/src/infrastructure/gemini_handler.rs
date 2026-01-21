@@ -1,7 +1,7 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::env;
-use dotenv::dotenv;
+use std::time::Duration;
 
 use crate::domain::model::ReplacementEntry;
 
@@ -73,19 +73,25 @@ pub struct GeminiHandler {
 const GEMINI_MODEL: &str = "gemini-3-flash-preview";
 
 impl GeminiHandler {
+    fn build_client() -> Result<Client, String> {
+        Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|e| e.to_string())
+    }
+
     /// Create a new handler with an explicit API key
     pub fn with_api_key(api_key: String) -> Result<Self, String> {
         if api_key.is_empty() {
             return Err("API key cannot be empty".to_string());
         }
-        Ok(Self { client: Client::new(), api_key })
+        Ok(Self { client: Self::build_client()?, api_key })
     }
 
     /// Create a new handler, trying settings first, then falling back to .env
     pub fn new() -> Result<Self, String> {
-        dotenv().ok();
         let api_key = env::var("GOOGLE_API_KEY").map_err(|_| "GOOGLE_API_KEY not set. Please configure your API key in the app settings.".to_string())?;
-        Ok(Self { client: Client::new(), api_key })
+        Ok(Self { client: Self::build_client()?, api_key })
     }
 
     /// Create handler from app handle (checks settings file first)
