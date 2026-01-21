@@ -5,6 +5,8 @@ use tauri_plugin_dialog::DialogExt;
 use chrono::Local;
 use sha2::{Sha256, Digest};
 use hex;
+use tauri::State;
+use crate::utils::access_control::{AccessControl, AccessSnapshot};
 use crate::utils::file_reader::read_file_with_encoding;
 
 /// Response from open_file command
@@ -23,7 +25,10 @@ fn sha256_hash(content: &str) -> String {
 
 /// Open file dialog and read file content
 #[tauri::command]
-pub async fn open_file(app: tauri::AppHandle) -> Result<Option<OpenFileResult>, String> {
+pub async fn open_file(
+    app: tauri::AppHandle,
+    access_control: State<'_, AccessControl>,
+) -> Result<Option<OpenFileResult>, String> {
     let file_path = app.dialog()
         .file()
         .add_filter("Text Files", &["txt", "csv", "json", "md", "log"])
@@ -35,6 +40,14 @@ pub async fn open_file(app: tauri::AppHandle) -> Result<Option<OpenFileResult>, 
     };
 
     let path_buf = path.into_path().map_err(|e| format!("Invalid path: {:?}", e))?;
+    let parent_dir = path_buf
+        .parent()
+        .ok_or_else(|| "Invalid path: no parent directory".to_string())?
+        .to_path_buf();
+
+    access_control.set_base_dir(parent_dir)?;
+
+    let path_buf = access_control.ensure_allowed(&path_buf)?;
     let content = read_file_with_encoding(&path_buf)?;
     let filename = path_buf
         .file_name()
@@ -64,6 +77,7 @@ pub async fn save_anonymized_file(
     original_filename: String,
     original_content: String,
     applied_plan: serde_json::Value,
+    access_control: State<'_, AccessControl>,
 ) -> Result<Option<SaveFileResult>, String> {
     // Generate default filename with _anonymized suffix
     let default_name = if let Some((name, ext)) = original_filename.rsplit_once('.') {
@@ -84,6 +98,7 @@ pub async fn save_anonymized_file(
     };
 
     let path_buf = path.into_path().map_err(|e| format!("Invalid path: {:?}", e))?;
+    let path_buf = access_control.ensure_allowed(&path_buf)?;
 
     // Save the anonymized content
     fs::write(&path_buf, &content)
@@ -91,6 +106,7 @@ pub async fn save_anonymized_file(
 
     // Generate audit log in the same directory
     let audit_log_path = path_buf.with_extension("audit.json");
+    access_control.ensure_allowed(&audit_log_path)?;
     let timestamp = Local::now().format("%Y-%m-%dT%H:%M:%S%z").to_string();
 
     let audit_log = serde_json::json!({
@@ -129,7 +145,10 @@ pub struct OpenFolderResult {
 
 /// Open folder dialog and list files
 #[tauri::command]
-pub async fn open_folder(app: tauri::AppHandle) -> Result<Option<OpenFolderResult>, String> {
+pub async fn open_folder(
+    app: tauri::AppHandle,
+    access_control: State<'_, AccessControl>,
+) -> Result<Option<OpenFolderResult>, String> {
     let folder_path = app.dialog()
         .file()
         .blocking_pick_folder();
@@ -140,6 +159,9 @@ pub async fn open_folder(app: tauri::AppHandle) -> Result<Option<OpenFolderResul
 
     let path_buf = path.into_path().map_err(|e| format!("Invalid path: {:?}", e))?;
 
+    access_control.set_base_dir(path_buf.clone())?;
+    let snapshot = access_control.snapshot()?;
+
     let folder_name = path_buf
         .file_name()
         .and_then(|n| n.to_str())
@@ -147,7 +169,7 @@ pub async fn open_folder(app: tauri::AppHandle) -> Result<Option<OpenFolderResul
         .to_string();
 
     let mut files = Vec::new();
-    collect_files_recursive(&path_buf, &mut files, 0, 3)?; // Max depth 3
+    collect_files_recursive(&snapshot, &path_buf, &mut files, 0, 3)?; // Max depth 3
 
     Ok(Some(OpenFolderResult {
         folder_path: path_buf.to_string_lossy().to_string(),
@@ -158,6 +180,7 @@ pub async fn open_folder(app: tauri::AppHandle) -> Result<Option<OpenFolderResul
 
 /// Recursively collect files from directory
 fn collect_files_recursive(
+    snapshot: &AccessSnapshot,
     dir: &Path,
     files: &mut Vec<FolderFileEntry>,
     depth: usize,
@@ -173,6 +196,13 @@ fn collect_files_recursive(
     for entry in entries {
         let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
         let path = entry.path();
+        if snapshot.is_ignored(&path) {
+            continue;
+        }
+
+        if snapshot.ensure_within_base(&path).is_err() {
+            continue;
+        }
         let filename = path.file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("")
@@ -189,7 +219,7 @@ fn collect_files_recursive(
                 filename,
                 is_dir: true,
             });
-            collect_files_recursive(&path, files, depth + 1, max_depth)?;
+            collect_files_recursive(snapshot, &path, files, depth + 1, max_depth)?;
         } else {
             files.push(FolderFileEntry {
                 path: path.to_string_lossy().to_string(),
@@ -204,9 +234,13 @@ fn collect_files_recursive(
 
 /// Read a single file's content (for lazy loading)
 #[tauri::command]
-pub async fn read_file_content(file_path: String) -> Result<OpenFileResult, String> {
+pub async fn read_file_content(
+    file_path: String,
+    access_control: State<'_, AccessControl>,
+) -> Result<OpenFileResult, String> {
     let path = Path::new(&file_path);
-    let content = read_file_with_encoding(path)?;
+    let path = access_control.ensure_allowed(path)?;
+    let content = read_file_with_encoding(&path)?;
     let filename = path
         .file_name()
         .and_then(|n| n.to_str())

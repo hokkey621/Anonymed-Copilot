@@ -4,10 +4,13 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use crate::domain::agent_orchestrator::AgentOrchestrator;
+use crate::utils::access_control::AccessControl;
 use crate::utils::file_reader::read_file_with_encoding;
+use crate::utils::path_guard::sanitize_task_name;
 use crate::utils::plan_apply::apply_plan_to_text;
 use serde::Serialize;
 use tauri::Emitter;
+use tauri::State;
 use rayon::prelude::*;
 use sha2::{Sha256, Digest};
 
@@ -57,8 +60,11 @@ fn sha256_hash(content: &str) -> String {
 #[tauri::command]
 pub async fn bulk_dry_run(
     dir_path: String,
+    access_control: State<'_, AccessControl>,
 ) -> Result<DryRunResult, String> {
     let path = Path::new(&dir_path);
+    let snapshot = access_control.snapshot()?;
+    let path = snapshot.ensure_allowed(path)?;
     if !path.is_dir() {
         return Err("Path is not a directory".into());
     }
@@ -66,6 +72,7 @@ pub async fn bulk_dry_run(
     let entries: Vec<_> = fs::read_dir(path)
         .map_err(|e| e.to_string())?
         .filter_map(|res| res.ok())
+        .filter(|e| !snapshot.is_ignored(&e.path()))
         .filter(|e| e.path().extension().map_or(false, |ext| ext == "txt"))
         .collect();
 
@@ -116,15 +123,19 @@ pub async fn bulk_execute(
     plan: AnonPlan,
     task_name: String,
     target_files: Option<Vec<String>>,
+    access_control: State<'_, AccessControl>,
 ) -> Result<BatchResult, String> {
-    let path = Path::new(&dir_path);
+    let snapshot = access_control.snapshot()?;
+    let path = snapshot.ensure_allowed(Path::new(&dir_path))?;
     if !path.is_dir() {
         return Err("Path is not a directory".into());
     }
 
     // Create output directory: anonymized_outputs/[task_name]_[timestamp]
     let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-    let output_dir = path.join("anonymized_outputs").join(format!("{}_{}", task_name, timestamp));
+    let safe_task_name = sanitize_task_name(&task_name);
+    let output_dir = path.join("anonymized_outputs").join(format!("{}_{}", safe_task_name, timestamp));
+    snapshot.ensure_allowed(&output_dir)?;
     fs::create_dir_all(&output_dir).map_err(|e| format!("Failed to create output directory: {}", e))?;
 
     // Emit: Validation step starting
@@ -138,7 +149,7 @@ pub async fn bulk_execute(
     });
 
     // Collect all files first
-    let all_entries: Vec<_> = fs::read_dir(path)
+    let all_entries: Vec<_> = fs::read_dir(&path)
         .map_err(|e| e.to_string())?
         .filter_map(|res| res.ok())
         .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
@@ -148,6 +159,7 @@ pub async fn bulk_execute(
                 .map(|name| !name.starts_with('.'))
                 .unwrap_or(false)
         })
+        .filter(|e| !snapshot.is_ignored(&e.path()))
         .collect();
 
     // Filter by target_files if specified
@@ -193,7 +205,7 @@ pub async fn bulk_execute(
             .unwrap_or_default();
 
         // Read original content
-        let content = match read_file_with_encoding(&file_path) {
+        let content = match snapshot.ensure_allowed(&file_path).and_then(|p| read_file_with_encoding(&p)) {
             Ok(c) => c,
             Err(_) => {
                 error_count.fetch_add(1, Ordering::Relaxed);
@@ -295,8 +307,10 @@ pub async fn process_bulk(
     app: tauri::AppHandle,
     dir_path: String,
     model_version_hash: String, // Traceability
+    access_control: State<'_, AccessControl>,
 ) -> Result<BatchResult, String> {
-    let path = Path::new(&dir_path);
+    let snapshot = access_control.snapshot()?;
+    let path = snapshot.ensure_allowed(Path::new(&dir_path))?;
     if !path.is_dir() {
         return Err("Path is not a directory".into());
     }
@@ -305,7 +319,7 @@ pub async fn process_bulk(
     let orchestrator = AgentOrchestrator::new(&app)?;
 
     // 2. List files
-    let entries: Vec<_> = fs::read_dir(path)
+    let entries: Vec<_> = fs::read_dir(&path)
         .map_err(|e| e.to_string())?
         .filter_map(|res| res.ok())
         .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
@@ -315,6 +329,7 @@ pub async fn process_bulk(
                 .map(|name| !name.starts_with('.'))
                 .unwrap_or(false)
         })
+        .filter(|e| !snapshot.is_ignored(&e.path()))
         .collect();
 
     // 3. Process Loop (Async Sequential for Gemini/API limits)
@@ -325,7 +340,7 @@ pub async fn process_bulk(
         let file_path = entry.path();
 
         // Read file content directly
-        let content = match read_file_with_encoding(&file_path) {
+        let content = match snapshot.ensure_allowed(&file_path).and_then(|p| read_file_with_encoding(&p)) {
              Ok(c) => c,
              Err(_) => {
                  error_count += 1;
@@ -383,8 +398,10 @@ pub struct BulkPreviewItem {
 pub async fn bulk_preview(
     target_files: Vec<String>,
     plan: AnonPlan,
+    access_control: State<'_, AccessControl>,
 ) -> Result<Vec<BulkPreviewItem>, String> {
     let mut results = Vec::new();
+    let snapshot = access_control.snapshot()?;
 
     for file_path_str in target_files {
         let file_path = Path::new(&file_path_str);
@@ -393,7 +410,7 @@ pub async fn bulk_preview(
             .unwrap_or_default();
 
         // Read original content
-        let original_content = match read_file_with_encoding(file_path) {
+        let original_content = match snapshot.ensure_allowed(file_path).and_then(|p| read_file_with_encoding(&p)) {
             Ok(c) => c,
             Err(e) => {
                 return Err(format!("Failed to read {}: {}", file_name, e));
@@ -431,11 +448,13 @@ pub struct BulkSaveItem {
 pub async fn bulk_save(
     output_dir: String,
     items: Vec<BulkSaveItem>,
+    access_control: State<'_, AccessControl>,
 ) -> Result<BatchResult, String> {
-    let output_path = Path::new(&output_dir);
+    let snapshot = access_control.snapshot()?;
+    let output_path = snapshot.ensure_allowed(Path::new(&output_dir))?;
 
     // Create output directory if it doesn't exist
-    fs::create_dir_all(output_path)
+    fs::create_dir_all(&output_path)
         .map_err(|e| format!("Failed to create output directory: {}", e))?;
 
     let mut processed_count = 0;
@@ -443,6 +462,13 @@ pub async fn bulk_save(
     let mut logs = Vec::new();
 
     for item in items {
+        if item.file_name.contains("..")
+            || item.file_name.contains('/')
+            || item.file_name.contains('\\')
+        {
+            error_count += 1;
+            continue;
+        }
         let file_path = output_path.join(&item.file_name);
 
         match fs::write(&file_path, &item.content) {
