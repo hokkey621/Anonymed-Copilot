@@ -26,7 +26,7 @@ impl AccessSnapshot {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct AccessControlState {
     base_dir: Option<PathBuf>,
     gitignore: Option<Arc<SimpleGitignore>>,
