@@ -118,7 +118,9 @@ pub async fn save_anonymized_file(
         "applied_plan": applied_plan,
     });
 
-    fs::write(&audit_log_path, serde_json::to_string_pretty(&audit_log).unwrap())
+    let audit_json = serde_json::to_string_pretty(&audit_log)
+        .map_err(|e| format!("Failed to serialize audit log: {}", e))?;
+    fs::write(&audit_log_path, audit_json)
         .map_err(|e| format!("Failed to write audit log: {}", e))?;
 
     Ok(Some(SaveFileResult {

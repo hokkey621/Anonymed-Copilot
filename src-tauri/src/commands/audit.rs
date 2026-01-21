@@ -1,9 +1,9 @@
 use crate::domain::model::{AuditLog, AnonPlan};
 use crate::infrastructure::pdf_writer;
+use chrono::Utc;
 use hmac::{Hmac, Mac};
 use sha2::{Sha256, Digest};
 use hex;
-use dotenv::dotenv;
 use std::env;
 
 // Create alias for HMAC-SHA256
@@ -29,7 +29,7 @@ pub fn create_audit_report(final_content: String, applied_plan: AnonPlan) -> Res
         user_overrides: vec![],
         privacy_score: 0.95, // Mock score
         data_hash: hash,
-        timestamp: "2024-01-01T12:00:00Z".to_string(), // Mock timestamp to avoid dependency issues if chrono missing
+        timestamp: Utc::now().to_rfc3339(),
         signature: None,
     };
 
@@ -40,7 +40,6 @@ pub fn create_audit_report(final_content: String, applied_plan: AnonPlan) -> Res
 pub fn generate_report(mut log: AuditLog) -> Result<String, String> {
     // Generate signature if missing
     if log.signature.is_none() {
-        dotenv().ok();
         let secret_key = env::var("ANONYMED_HMAC_KEY")
             .map_err(|_| "ANONYMED_HMAC_KEY not set".to_string())?;
         let mut mac = HmacSha256::new_from_slice(secret_key.as_bytes())
