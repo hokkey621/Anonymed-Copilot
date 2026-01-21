@@ -7,7 +7,7 @@ import { ChatMessage } from "@/components/chat/ChatMessage";
 import { BulkPlanCard } from "@/components/chat/BulkPlanCard";
 import { SuggestionChips } from "@/components/chat/SuggestionChips";
 import { AgentProgressEvent } from "./ProgressIndicator";
-import { Send, ChevronDown, FileText, Loader2, Sparkles } from "lucide-react";
+import { Send, FileText, Loader2, Sparkles } from "lucide-react";
 
 interface Message {
   role: "user" | "assistant";
@@ -99,8 +99,8 @@ export function ConfigSidebar({
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "assistant",
-      content: "こんにちは、Anonymed Copilotです。匿名化したいカルテや資料を開いてください。元のファイルは変更されないので安心してください。",
-      suggestions: ["匿名化したい", "使い方を教えて"]
+      content: "こんにちは。ユーザーテストへのご協力ありがとうございます！\n\nまずは左上の「File」>「ファイルを開く」から、匿名化したいカルテや資料（テキストファイル）を開いてください。\n\n個人情報は自動的に検出・匿名化されます。",
+      suggestions: ["このファイルについて説明して", "匿名化を実行して", "使い方を教えて"]
     }
   ]);
   const [inputInfo, setInputInfo] = useState("");
@@ -585,13 +585,14 @@ export function ConfigSidebar({
           <div className="relative">
             <button
               onClick={() => setShowModelDropdown(!showModelDropdown)}
-              className="flex items-center gap-1 px-2 py-1 rounded hover:bg-muted transition-colors text-muted-foreground"
+              className="flex items-center gap-1 px-2 py-1 rounded hover:bg-muted transition-colors text-muted-foreground opacity-50 cursor-default"
+              disabled={true}
             >
               {modelLabel}
-              <ChevronDown size={12} />
+              {/* <ChevronDown size={12} /> */}
             </button>
             {showModelDropdown && (
-              <div className="absolute bottom-full left-0 mb-1 bg-popover border rounded-md shadow-lg py-1 min-w-[160px] z-50">
+              <div className="hidden absolute bottom-full left-0 mb-1 bg-popover border rounded-md shadow-lg py-1 min-w-[160px] z-50">
                 {MODEL_OPTIONS.map(opt => (
                   <button
                     key={opt.value}
