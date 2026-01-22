@@ -140,6 +140,17 @@ export function ConfigSidebar({
     return cleaned.trim();
   };
 
+  const resolveResponseContent = (raw: string, userInput: string): string => {
+    const cleaned = filterThoughtTags(raw);
+    if (cleaned) return cleaned;
+
+    if (/使い方|ヘルプ|help/i.test(userInput)) {
+      return "使い方の概要:\n1. 左上のメニューからファイルを開く\n2. 右のチャットで「匿名化を実行」など指示\n3. 変更内容を確認して保存";
+    }
+
+    return "すみません、もう一度質問を言い換えてもらえますか？";
+  };
+
   // Keywords that indicate file content should be sent to the LLM
   const FILE_CONTENT_KEYWORDS = [
     "計画を立てて", "実行して", "一括", "全件", "全て", "すべて",
@@ -247,7 +258,7 @@ export function ConfigSidebar({
 
       const newMessage: Message = {
         role: "assistant",
-        content: filterThoughtTags(response.message),
+        content: resolveResponseContent(response.message, inputInfo),
         bulkPlan: response.bulk_plan || undefined,
         workflowSteps: response.workflow_steps || undefined,
         suggestions: response.suggestions || undefined
@@ -372,7 +383,7 @@ export function ConfigSidebar({
 
                   const newMessage: Message = {
                     role: "assistant",
-                    content: filterThoughtTags(response.message),
+                    content: resolveResponseContent(response.message, text),
                     bulkPlan: response.bulk_plan || undefined,
                     workflowSteps: response.workflow_steps || undefined,
                     suggestions: response.suggestions || undefined
