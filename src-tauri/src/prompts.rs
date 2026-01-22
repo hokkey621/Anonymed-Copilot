@@ -134,7 +134,7 @@ pub fn anonymization_purpose_options() -> Vec<String> {
     vec![
         "ワクチン開発用".to_string(),
         "教材作成用".to_string(),
-        "標準設定で".to_string(),
+        "匿名化プランを作成 (標準)".to_string(),
     ]
 }
 

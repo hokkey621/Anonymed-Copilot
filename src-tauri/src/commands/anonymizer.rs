@@ -66,6 +66,7 @@ use serde::Serialize;
 
 /// Response from agent chat that may include bulk execution plan
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentChatResponse {
     pub message: String,
     pub bulk_plan: Option<BulkExecutionPlan>,
@@ -97,7 +98,7 @@ fn detect_purpose_intent(messages: &[ChatMessage]) -> bool {
 }
 
 /// Check if the user message indicates intent to create a plan
-fn detect_planning_intent(messages: &[ChatMessage]) -> bool {
+fn _detect_planning_intent(messages: &[ChatMessage]) -> bool {
     use crate::prompts::EXECUTION_KEYWORDS;
 
     if let Some(last_user_msg) = messages.iter().rev().find(|m| m.role == "user") {
@@ -255,7 +256,7 @@ pub async fn agent_chat_streaming(
     let handler = GeminiHandler::from_app(&app)?;
 
     let is_bulk_request = detect_bulk_intent(&messages);
-    let has_purpose = detect_purpose_intent(&messages);
+    // let has_purpose = detect_purpose_intent(&messages); // Moved to later check
 
     // Generate system prompt using the centralized prompts module
     use crate::prompts;
@@ -340,7 +341,6 @@ pub async fn agent_chat_streaming(
         }),
     );
 
-    // Check if user has expressed anonymization purpose
     let has_purpose = detect_purpose_intent(&messages);
     // let planning_intent = detect_planning_intent(&messages); // No longer auto-triggering on generic planning intent
 
