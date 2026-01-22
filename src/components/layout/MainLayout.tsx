@@ -329,16 +329,30 @@ export function MainLayout() {
           console.log("[Bulk Review] Read success:", result.filename, "content length:", result.content.length);
           fileContents.push({ path: filePath, fileName: result.filename, content: result.content });
         } catch (readError) {
-          console.error("[Bulk Review] Failed to read file:", filePath, readError);
+          console.error("[Bulk Review] Failed to read file:", {
+            path: filePath,
+            error: readError,
+          });
           readFailures.push({
             fileName: filePath.split("/").pop() || filePath,
             error: formatError(readError),
           });
         }
       }
-      console.log("[Bulk Review] Total files read:", fileContents.length);
+      console.log("[Bulk Review] Total files read:", fileContents.length, "of", targetFiles.length);
+      if (fileContents.length > 0) {
+        console.log(
+          "[Bulk Review] Read files:",
+          fileContents.map((f) => ({
+            name: f.fileName,
+            path: f.path,
+            size: f.content.length,
+          }))
+        );
+      }
 
       if (readFailures.length > 0) {
+        console.warn("[Bulk Review] Read failures:", readFailures);
         alert(
           `読み込みに失敗したファイルがあります:\n${readFailures
             .map(f => `- ${f.fileName}: ${f.error}`)
@@ -357,15 +371,25 @@ export function MainLayout() {
       const analysisFailures: { fileName: string; error: string }[] = [];
       const analysisPromises = fileContents.map(async (file) => {
         try {
+          console.log("[Bulk Review] Analyzing:", file.fileName, file.path);
           // Call analyze_text for this specific file
           const plan = await invoke<AnonPlan>("analyze_text", {
             text: file.content,
             taskContext
           });
+          console.log("[Bulk Review] Plan generated:", {
+            file: file.fileName,
+            replacements: plan.replacements?.length ?? 0,
+            status: plan.status,
+          });
           // Apply the plan
           const anonymized = await invoke<string>("apply_plan", {
             text: file.content,
             plan
+          });
+          console.log("[Bulk Review] Apply plan complete:", {
+            file: file.fileName,
+            outputSize: anonymized.length,
           });
 
           // Update progress
@@ -380,7 +404,11 @@ export function MainLayout() {
             plan,
           };
         } catch (e) {
-          console.error(`Failed to analyze ${file.fileName}:`, e);
+          console.error("[Bulk Review] Failed to analyze:", {
+            file: file.fileName,
+            path: file.path,
+            error: e,
+          });
           analysisFailures.push({ fileName: file.fileName, error: formatError(e) });
           completedCount++;
           setBulkAnalysisProgress(prev => ({ ...prev, completed: completedCount }));
@@ -393,6 +421,7 @@ export function MainLayout() {
       console.log("[Bulk Review] Valid results:", validResults.length, "of", results.length);
 
       if (analysisFailures.length > 0) {
+        console.warn("[Bulk Review] Analysis failures:", analysisFailures);
         alert(
           `解析に失敗したファイルがあります:\n${analysisFailures
             .map(f => `- ${f.fileName}: ${f.error}`)
