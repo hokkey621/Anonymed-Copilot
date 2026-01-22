@@ -63,6 +63,16 @@ export function MainLayout() {
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const [_hasApiKey, setHasApiKey] = useState(true); // Assume true initially
 
+  const formatError = (error: unknown): string => {
+    if (typeof error === "string") return error;
+    if (error instanceof Error) return error.message;
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  };
+
   // Check for API key on mount
   useEffect(() => {
     const checkApiKey = async () => {
@@ -322,7 +332,7 @@ export function MainLayout() {
           console.error("[Bulk Review] Failed to read file:", filePath, readError);
           readFailures.push({
             fileName: filePath.split("/").pop() || filePath,
-            error: String(readError),
+            error: formatError(readError),
           });
         }
       }
@@ -331,7 +341,7 @@ export function MainLayout() {
       if (readFailures.length > 0) {
         alert(
           `読み込みに失敗したファイルがあります:\n${readFailures
-            .map(f => `- ${f.fileName}`)
+            .map(f => `- ${f.fileName}: ${f.error}`)
             .join("\n")}`
         );
       }
@@ -344,7 +354,7 @@ export function MainLayout() {
 
       // Analyze each file with AI in parallel (Promise.all with progress tracking)
       let completedCount = 0;
-      const analysisFailures: string[] = [];
+      const analysisFailures: { fileName: string; error: string }[] = [];
       const analysisPromises = fileContents.map(async (file) => {
         try {
           // Call analyze_text for this specific file
@@ -371,7 +381,7 @@ export function MainLayout() {
           };
         } catch (e) {
           console.error(`Failed to analyze ${file.fileName}:`, e);
-          analysisFailures.push(file.fileName);
+          analysisFailures.push({ fileName: file.fileName, error: formatError(e) });
           completedCount++;
           setBulkAnalysisProgress(prev => ({ ...prev, completed: completedCount }));
           return null;
@@ -385,7 +395,7 @@ export function MainLayout() {
       if (analysisFailures.length > 0) {
         alert(
           `解析に失敗したファイルがあります:\n${analysisFailures
-            .map(name => `- ${name}`)
+            .map(f => `- ${f.fileName}: ${f.error}`)
             .join("\n")}`
         );
       }
