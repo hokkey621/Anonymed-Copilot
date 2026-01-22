@@ -4,6 +4,7 @@ use std::env;
 use std::time::Duration;
 
 use crate::domain::model::ReplacementEntry;
+use crate::utils::env_loader::load_dotenv_if_allowed;
 
 #[derive(Deserialize)]
 struct GeminiResponse {
@@ -93,6 +94,7 @@ impl GeminiHandler {
 
     /// Create a new handler, trying settings first, then falling back to .env
     pub fn new() -> Result<Self, String> {
+        load_dotenv_if_allowed();
         let api_key = env::var("GOOGLE_API_KEY").map_err(|_| {
             "GOOGLE_API_KEY not set. Please configure your API key in the app settings.".to_string()
         })?;
