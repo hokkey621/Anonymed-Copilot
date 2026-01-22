@@ -11,6 +11,7 @@ use tauri_plugin_dialog::DialogExt;
 
 /// Response from open_file command
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OpenFileResult {
     pub path: String,
     pub content: String,
@@ -103,6 +104,7 @@ pub async fn open_file(
 
 /// Response from save_anonymized_file command
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SaveFileResult {
     pub saved_path: String,
     pub audit_log_path: String,
@@ -185,6 +187,7 @@ pub async fn save_anonymized_file(
 
 /// File entry for folder listing
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FolderFileEntry {
     pub path: String,
     pub filename: String,
@@ -193,6 +196,7 @@ pub struct FolderFileEntry {
 
 /// Response from open_folder command
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OpenFolderResult {
     pub folder_path: String,
     pub folder_name: String,

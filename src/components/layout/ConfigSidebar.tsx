@@ -18,9 +18,9 @@ interface Message {
 }
 
 interface BulkExecutionPlan {
-  target_count: number;
-  estimated_time_ms: number;
-  policy_summary: string[];
+  targetCount: number;
+  estimatedTimeMs: number;
+  policySummary: string[];
 }
 
 interface WorkflowStep {
@@ -32,16 +32,16 @@ interface WorkflowStep {
 interface BulkProgressEvent {
   completed: number;
   total: number;
-  current_file: string;
-  step_id: string;
-  step_status: string;
-  step_message: string;
+  currentFile: string;
+  stepId: string;
+  stepStatus: string;
+  stepMessage: string;
 }
 
 interface AgentChatResponse {
   message: string;
-  bulk_plan: BulkExecutionPlan | null;
-  workflow_steps: WorkflowStep[] | null;
+  bulkPlan: BulkExecutionPlan | null;
+  workflowSteps: WorkflowStep[] | null;
   suggestions: string[] | null;
 }
 
@@ -187,12 +187,12 @@ export function ConfigSidebar({
   // Listen for bulk progress
   useEffect(() => {
     const unlisten = listen<BulkProgressEvent>("bulk-progress", (event) => {
-      const { completed, total, current_file, step_id, step_status } = event.payload;
-      setBulkProgress({ completed, total, currentFile: current_file });
+      const { completed, total, currentFile, stepId, stepStatus } = event.payload;
+      setBulkProgress({ completed, total, currentFile });
       setWorkflowSteps(prev => prev.map(step =>
-        step.id === step_id ? { ...step, status: step_status as WorkflowStep['status'] } : step
+        step.id === stepId ? { ...step, status: stepStatus as WorkflowStep['status'] } : step
       ));
-      if (step_id === "audit" && step_status === "completed") {
+      if (stepId === "audit" && stepStatus === "completed") {
         setIsBulkExecuting(false);
       }
     });
@@ -262,16 +262,16 @@ export function ConfigSidebar({
       const newMessage: Message = {
         role: "assistant",
         content: resolveResponseContent(response.message, inputInfo),
-        bulkPlan: response.bulk_plan || undefined,
-        workflowSteps: response.workflow_steps || undefined,
+        bulkPlan: response.bulkPlan || undefined,
+        workflowSteps: response.workflowSteps || undefined,
         suggestions: response.suggestions || undefined
       };
 
       setMessages(prev => [...prev, newMessage]);
 
-      if (response.bulk_plan && response.workflow_steps) {
-        setActiveBulkPlan(response.bulk_plan);
-        setWorkflowSteps(response.workflow_steps);
+      if (response.bulkPlan && response.workflowSteps) {
+        setActiveBulkPlan(response.bulkPlan);
+        setWorkflowSteps(response.workflowSteps);
       }
 
       // Auto-detect task context
@@ -309,7 +309,7 @@ export function ConfigSidebar({
 
     // Fallback: Old bulk execute (direct save without review)
     setIsBulkExecuting(true);
-    setBulkProgress({ completed: 0, total: activeBulkPlan?.target_count || 1 });
+    setBulkProgress({ completed: 0, total: activeBulkPlan?.targetCount || 1 });
 
     try {
       if (currentDirPath && currentPlan) {
@@ -387,16 +387,16 @@ export function ConfigSidebar({
                   const newMessage: Message = {
                     role: "assistant",
                     content: resolveResponseContent(response.message, text),
-                    bulkPlan: response.bulk_plan || undefined,
-                    workflowSteps: response.workflow_steps || undefined,
+                    bulkPlan: response.bulkPlan || undefined,
+                    workflowSteps: response.workflowSteps || undefined,
                     suggestions: response.suggestions || undefined
                   };
 
                   setMessages(prev => [...prev, newMessage]);
 
-                  if (response.bulk_plan && response.workflow_steps) {
-                    setActiveBulkPlan(response.bulk_plan);
-                    setWorkflowSteps(response.workflow_steps);
+                  if (response.bulkPlan && response.workflowSteps) {
+                    setActiveBulkPlan(response.bulkPlan);
+                    setWorkflowSteps(response.workflowSteps);
                   }
                 } catch (e) {
                   console.error("Chat error:", e);

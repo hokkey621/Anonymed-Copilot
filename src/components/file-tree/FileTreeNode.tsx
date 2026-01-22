@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 export interface FileEntry {
   path: string;
   filename: string;
-  is_dir: boolean;
+  isDir: boolean;
 }
 
 export interface OpenedFileInfo {
@@ -54,7 +54,7 @@ export function FileTreeNode({
 }: FileTreeNodeProps) {
   const baseIndent = 16; // px per depth level
 
-  if (file.is_dir) {
+  if (file.isDir) {
     return (
       <div>
         <div

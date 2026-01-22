@@ -18,19 +18,19 @@ interface OpenFileResult {
 }
 
 interface SaveFileResult {
-  saved_path: string;
-  audit_log_path: string;
+  savedPath: string;
+  auditLogPath: string;
 }
 
 interface FolderFileEntry {
   path: string;
   filename: string;
-  is_dir: boolean;
+  isDir: boolean;
 }
 
 interface OpenFolderResult {
-  folder_path: string;
-  folder_name: string;
+  folderPath: string;
+  folderName: string;
   files: FolderFileEntry[];
 }
 
@@ -137,14 +137,14 @@ export function MainLayout() {
       const result = await invoke<OpenFolderResult | null>("open_folder");
       if (result) {
         console.info("[UI] Folder opened:", {
-          path: result.folder_path,
-          name: result.folder_name,
+          path: result.folderPath,
+          name: result.folderName,
           files: result.files.length,
         });
-        setCurrentFolder({ path: result.folder_path, name: result.folder_name });
+        setCurrentFolder({ path: result.folderPath, name: result.folderName });
         setFolderFiles(result.files);
         // Select all non-directory files by default
-        const allFilePaths = result.files.filter(f => !f.is_dir).map(f => f.path);
+        const allFilePaths = result.files.filter(f => !f.isDir).map(f => f.path);
         setSelectedFilesForBulk(new Set(allFilePaths));
         // Reset opened files when opening new folder
         setOpenedFiles([]);
@@ -231,9 +231,9 @@ export function MainLayout() {
         appliedPlan: currentPlan,
       });
       if (result) {
-        console.info("[UI] File saved:", result.saved_path);
-        console.info("[UI] Audit log:", result.audit_log_path);
-        alert(`保存しました:\n${result.saved_path}`);
+        console.info("[UI] File saved:", result.savedPath);
+        console.info("[UI] Audit log:", result.auditLogPath);
+        alert(`保存しました:\n${result.savedPath}`);
         // Mark as no changes
         setOpenedFiles(prev =>
           prev.map(f => f.path === activeFilePath ? { ...f, hasChanges: false } : f)
@@ -315,9 +315,9 @@ export function MainLayout() {
               appliedPlan: currentPlan,
             });
             if (result) {
-              console.info("[UI] File saved:", result.saved_path);
-              console.info("[UI] Audit log:", result.audit_log_path);
-              alert(`保存しました:\n${result.saved_path}`);
+              console.info("[UI] File saved:", result.savedPath);
+              console.info("[UI] Audit log:", result.auditLogPath);
+              alert(`保存しました:\n${result.savedPath}`);
               // Mark as no changes
               setOpenedFiles(prev =>
                 prev.map(f => f.path === activeFilePath ? { ...f, hasChanges: false } : f)
@@ -710,7 +710,7 @@ export function MainLayout() {
                 isProcessing={isProcessing}
                 currentContent={originalContent}
                 currentPlan={currentPlan}
-                fileCount={selectedFilesForBulk.size > 0 ? selectedFilesForBulk.size : folderFiles.filter(f => !f.is_dir).length}
+                fileCount={selectedFilesForBulk.size > 0 ? selectedFilesForBulk.size : folderFiles.filter(f => !f.isDir).length}
                 currentFileName={activeFile?.filename}
                 currentDirPath={currentFolder?.path}
                 selectedFilePaths={Array.from(selectedFilesForBulk)}
