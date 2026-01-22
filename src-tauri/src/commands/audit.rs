@@ -1,6 +1,5 @@
 use crate::domain::model::{AnonPlan, AuditLog};
 use crate::infrastructure::pdf_writer;
-use crate::utils::env_loader::load_dotenv_if_allowed;
 use chrono::Utc;
 use hex;
 use hmac::{Hmac, Mac};
@@ -46,7 +45,6 @@ pub fn create_audit_report(
 pub fn generate_report(mut log: AuditLog) -> Result<String, String> {
     // Generate signature if missing
     if log.signature.is_none() {
-        load_dotenv_if_allowed();
         let secret_key =
             env::var("ANONYMED_HMAC_KEY").map_err(|_| "ANONYMED_HMAC_KEY not set".to_string())?;
         let mut mac = HmacSha256::new_from_slice(secret_key.as_bytes())

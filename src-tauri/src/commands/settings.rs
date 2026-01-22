@@ -1,5 +1,3 @@
-use crate::utils::env_loader::load_dotenv_if_allowed;
-use std::env;
 use std::fs;
 use std::path::PathBuf;
 use tauri::Manager;
@@ -14,11 +12,6 @@ fn get_settings_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 #[derive(serde::Serialize, serde::Deserialize, Default)]
 pub struct AppSettings {
     pub api_key: Option<String>,
-}
-
-fn is_valid_api_key(key: &str) -> bool {
-    let trimmed = key.trim();
-    !trimmed.is_empty() && trimmed != "your_api_key_here"
 }
 
 /// Save the API key to settings file
@@ -55,23 +48,17 @@ pub async fn load_api_key(app: tauri::AppHandle) -> Result<Option<String>, Strin
     let content = fs::read_to_string(&settings_path).map_err(|e| e.to_string())?;
     let settings: AppSettings = serde_json::from_str(&content).map_err(|e| e.to_string())?;
 
-    Ok(settings.api_key.filter(|key| is_valid_api_key(key)))
+    Ok(settings.api_key.filter(|key| !key.is_empty()))
 }
 
 /// Check if API key is configured in settings file
 /// Note: Does NOT check .env - we want first-time users to see the modal
 #[tauri::command]
 pub async fn has_api_key(app: tauri::AppHandle) -> Result<bool, String> {
-    // 1) Settings file takes priority
+    // Only check settings file, not .env
+    // This ensures first-time users see the API key modal
     if let Ok(Some(key)) = load_api_key(app).await {
-        return Ok(is_valid_api_key(&key));
+        return Ok(!key.is_empty());
     }
-
-    // 2) Dev-only opt-in .env fallback
-    load_dotenv_if_allowed();
-    if let Ok(key) = env::var("GOOGLE_API_KEY") {
-        return Ok(is_valid_api_key(&key));
-    }
-
     Ok(false)
 }
