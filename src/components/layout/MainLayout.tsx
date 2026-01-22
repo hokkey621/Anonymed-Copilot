@@ -303,7 +303,7 @@ export function MainLayout() {
     const targetFiles = Array.from(selectedFilesForBulk);
     const total = targetFiles.length;
 
-    // Start analysis phase
+    // Start analysis phase (total may be adjusted after read)
     setBulkAnalysisProgress({ completed: 0, total, isAnalyzing: true });
     setIsProcessing(true);
 
@@ -311,6 +311,7 @@ export function MainLayout() {
       // Read all file contents first
       console.log("[Bulk Review] Starting with files:", targetFiles);
       const fileContents: {path: string, fileName: string, content: string}[] = [];
+      const readFailures: { fileName: string; error: string }[] = [];
       for (const filePath of targetFiles) {
         try {
           console.log("[Bulk Review] Reading file:", filePath);
@@ -319,12 +320,31 @@ export function MainLayout() {
           fileContents.push({ path: filePath, fileName: result.filename, content: result.content });
         } catch (readError) {
           console.error("[Bulk Review] Failed to read file:", filePath, readError);
+          readFailures.push({
+            fileName: filePath.split("/").pop() || filePath,
+            error: String(readError),
+          });
         }
       }
       console.log("[Bulk Review] Total files read:", fileContents.length);
 
+      if (readFailures.length > 0) {
+        alert(
+          `読み込みに失敗したファイルがあります:\n${readFailures
+            .map(f => `- ${f.fileName}`)
+            .join("\n")}`
+        );
+      }
+
+      setBulkAnalysisProgress(prev => ({
+        ...prev,
+        total: fileContents.length,
+        completed: 0
+      }));
+
       // Analyze each file with AI in parallel (Promise.all with progress tracking)
       let completedCount = 0;
+      const analysisFailures: string[] = [];
       const analysisPromises = fileContents.map(async (file) => {
         try {
           // Call analyze_text for this specific file
@@ -351,6 +371,7 @@ export function MainLayout() {
           };
         } catch (e) {
           console.error(`Failed to analyze ${file.fileName}:`, e);
+          analysisFailures.push(file.fileName);
           completedCount++;
           setBulkAnalysisProgress(prev => ({ ...prev, completed: completedCount }));
           return null;
@@ -360,6 +381,14 @@ export function MainLayout() {
       const results = await Promise.all(analysisPromises);
       const validResults = results.filter((r): r is NonNullable<typeof r> => r !== null);
       console.log("[Bulk Review] Valid results:", validResults.length, "of", results.length);
+
+      if (analysisFailures.length > 0) {
+        alert(
+          `解析に失敗したファイルがあります:\n${analysisFailures
+            .map(name => `- ${name}`)
+            .join("\n")}`
+        );
+      }
 
       // Check if we have any valid results
       if (validResults.length === 0) {
