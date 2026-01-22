@@ -29,6 +29,9 @@ pub async fn open_file(
     app: tauri::AppHandle,
     access_control: State<'_, AccessControl>,
 ) -> Result<Option<OpenFileResult>, String> {
+    if cfg!(debug_assertions) {
+        println!("[File] open_file dialog opened");
+    }
     let file_path = app
         .dialog()
         .file()
@@ -52,6 +55,13 @@ pub async fn open_file(
 
     let path_buf = access_control.ensure_allowed(&path_buf)?;
     let content = read_file_with_encoding(&path_buf)?;
+    if cfg!(debug_assertions) {
+        println!(
+            "[File] open_file read: path={}, size={}",
+            path_buf.display(),
+            content.len()
+        );
+    }
     let filename = path_buf
         .file_name()
         .and_then(|n| n.to_str())
@@ -82,6 +92,13 @@ pub async fn save_anonymized_file(
     applied_plan: serde_json::Value,
     access_control: State<'_, AccessControl>,
 ) -> Result<Option<SaveFileResult>, String> {
+    if cfg!(debug_assertions) {
+        println!(
+            "[File] save_anonymized_file: original={}, content_size={}",
+            original_filename,
+            content.len()
+        );
+    }
     // Generate default filename with _anonymized suffix
     let default_name = if let Some((name, ext)) = original_filename.rsplit_once('.') {
         format!("{}_anonymized.{}", name, ext)
@@ -108,6 +125,9 @@ pub async fn save_anonymized_file(
 
     // Save the anonymized content
     fs::write(&path_buf, &content).map_err(|e| format!("Failed to save file: {}", e))?;
+    if cfg!(debug_assertions) {
+        println!("[File] saved: {}", path_buf.display());
+    }
 
     // Generate audit log in the same directory
     let audit_log_path = path_buf.with_extension("audit.json");
@@ -127,6 +147,9 @@ pub async fn save_anonymized_file(
         .map_err(|e| format!("Failed to serialize audit log: {}", e))?;
     fs::write(&audit_log_path, audit_json)
         .map_err(|e| format!("Failed to write audit log: {}", e))?;
+    if cfg!(debug_assertions) {
+        println!("[File] audit log saved: {}", audit_log_path.display());
+    }
 
     Ok(Some(SaveFileResult {
         saved_path: path_buf.to_string_lossy().to_string(),
@@ -156,6 +179,9 @@ pub async fn open_folder(
     app: tauri::AppHandle,
     access_control: State<'_, AccessControl>,
 ) -> Result<Option<OpenFolderResult>, String> {
+    if cfg!(debug_assertions) {
+        println!("[File] open_folder dialog opened");
+    }
     let folder_path = app.dialog().file().blocking_pick_folder();
 
     let Some(path) = folder_path else {
@@ -177,6 +203,13 @@ pub async fn open_folder(
 
     let mut files = Vec::new();
     collect_files_recursive(&snapshot, &path_buf, &mut files, 0, 3)?; // Max depth 3
+    if cfg!(debug_assertions) {
+        println!(
+            "[File] open_folder read: path={}, entries={}",
+            path_buf.display(),
+            files.len()
+        );
+    }
 
     Ok(Some(OpenFolderResult {
         folder_path: path_buf.to_string_lossy().to_string(),
@@ -248,6 +281,13 @@ pub async fn read_file_content(
     let path = Path::new(&file_path);
     let path = access_control.ensure_allowed(path)?;
     let content = read_file_with_encoding(&path)?;
+    if cfg!(debug_assertions) {
+        println!(
+            "[File] read_file_content: path={}, size={}",
+            path.display(),
+            content.len()
+        );
+    }
     let filename = path
         .file_name()
         .and_then(|n| n.to_str())

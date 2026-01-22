@@ -160,6 +160,13 @@ impl GeminiHandler {
         &self,
         request_body: &GeminiRequest,
     ) -> Result<reqwest::Response, String> {
+        if cfg!(debug_assertions) {
+            println!(
+                "[Gemini] generateContent request: model={}, contents={}",
+                GEMINI_MODEL,
+                request_body.contents.len()
+            );
+        }
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
             GEMINI_MODEL, self.api_key
@@ -177,11 +184,20 @@ impl GeminiHandler {
                 .await
                 .map_err(|e| self.redact_error_message(&e.to_string()))?;
 
+            if cfg!(debug_assertions) {
+                println!(
+                    "[Gemini] generateContent response: status={}",
+                    response.status()
+                );
+            }
             if response.status().as_u16() == 503 {
                 if retries >= max_retries {
                     return Err("Gemini API overloaded (503) after max retries".to_string());
                 }
                 retries += 1;
+                if cfg!(debug_assertions) {
+                    println!("[Gemini] retrying request: attempt={}", retries + 1);
+                }
                 tokio::time::sleep(std::time::Duration::from_millis(
                     500 * 2_u64.pow(retries - 1),
                 ))
@@ -191,10 +207,9 @@ impl GeminiHandler {
             if !response.status().is_success() {
                 let status = response.status();
                 let text = response.text().await.unwrap_or_default();
-                return Err(self.redact_error_message(&format!(
-                    "Gemini API Error {}: {}",
-                    status, text
-                )));
+                return Err(
+                    self.redact_error_message(&format!("Gemini API Error {}: {}", status, text))
+                );
             }
             return Ok(response);
         }
@@ -359,6 +374,13 @@ impl GeminiHandler {
         use futures_util::StreamExt;
         use tauri::Emitter;
 
+        if cfg!(debug_assertions) {
+            println!(
+                "[Gemini] streamGenerateContent request: model={}, turns={}",
+                GEMINI_MODEL,
+                history.len()
+            );
+        }
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?key={}&alt=sse",
             GEMINI_MODEL, self.api_key
@@ -386,13 +408,18 @@ impl GeminiHandler {
             .await
             .map_err(|e| self.redact_error_message(&e.to_string()))?;
 
+        if cfg!(debug_assertions) {
+            println!(
+                "[Gemini] streamGenerateContent response: status={}",
+                response.status()
+            );
+        }
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            return Err(self.redact_error_message(&format!(
-                "Gemini API Error {}: {}",
-                status, text
-            )));
+            return Err(
+                self.redact_error_message(&format!("Gemini API Error {}: {}", status, text))
+            );
         }
 
         let mut full_text = String::new();
