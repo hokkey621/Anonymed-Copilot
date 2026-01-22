@@ -26,6 +26,7 @@ pub fn run() {
             commands::batch::bulk_save,
             commands::file::open_file,
             commands::file::open_folder,
+            commands::file::open_directory,
             commands::file::read_file_content,
             commands::file::save_anonymized_file,
             commands::settings::save_api_key,

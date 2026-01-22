@@ -63,7 +63,7 @@ interface ConfigSidebarProps {
   onBulkSkip?: () => void;
   onBulkCancel?: () => void;
   onBulkPrevious?: () => void;
-  onBulkComplete?: () => void;
+  onBulkComplete?: () => Promise<{ path: string; files: string[] } | null | void>;
   canGoPrevious?: boolean;
   canGoNext?: boolean;
   fileStatuses?: { path: string; fileName: string; status: 'approved' | 'skipped' | 'pending' }[];
@@ -543,7 +543,23 @@ export function ConfigSidebar({
             <Button
               size="sm"
               variant="default"
-              onClick={onBulkComplete}
+              onClick={async () => {
+                if (onBulkComplete) {
+                  const result = await onBulkComplete();
+                  if (result && typeof result === 'object' && 'path' in result) {
+                    setMessages(prev => [...prev, {
+                      role: "assistant",
+                      content: `✅ 保存が完了しました！\n\n**保存先:**\n\`${result.path}\`\n\n**保存されたファイル (${result.files.length}件):**\n${result.files.map(f => `- ${f}`).join('\n')}`
+                    }]);
+                  } else if (typeof result === 'string') {
+                    // Fallback for string return
+                     setMessages(prev => [...prev, {
+                      role: "assistant",
+                      content: `✅ 保存が完了しました！\n\n**保存先:**\n\`${result}\``
+                    }]);
+                  }
+                }
+              }}
               disabled={approvedCount === 0}
             >
               保存して終了

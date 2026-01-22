@@ -556,7 +556,7 @@ export function MainLayout() {
   };
 
   // Complete bulk review: show save dialog and save
-  const handleBulkComplete = async () => {
+  const handleBulkComplete = async (): Promise<{ path: string; files: string[] } | null> => {
     // Get only approved files
     const approvedFiles = Array.from(bulkApprovedResults.values()).filter(r => r.status === 'approved');
     if (approvedFiles.length === 0) {
@@ -564,7 +564,7 @@ export function MainLayout() {
       setBulkReviewMode(false);
       setOriginalContent("");
       setAnonymizedContent("");
-      return;
+      return null;
     }
 
     try {
@@ -577,28 +577,42 @@ export function MainLayout() {
       });
 
       if (selectedPath && typeof selectedPath === "string") {
-        const itemsToSave = approvedFiles.map(r => ({ fileName: r.fileName, content: r.content }));
+        const itemsToSave = approvedFiles.map(r => ({ file_name: r.fileName, content: r.content }));
         console.info("[Bulk Review] Save request:", {
           outputDir: selectedPath,
-          files: itemsToSave.map(f => f.fileName),
+          files: itemsToSave.map(f => f.file_name),
         });
         await invoke("bulk_save", {
           outputDir: selectedPath,
           items: itemsToSave,
         });
         console.info(`Saved ${approvedFiles.length} files to ${selectedPath}`);
-        alert(`保存しました:\n${selectedPath}`);
+
+        // Open the directory in OS explorer
+        try {
+          await invoke("open_directory", { path: selectedPath });
+        } catch (openErr) {
+          console.warn("Failed to open directory:", openErr);
+        }
+
+        // Return the path and files so ConfigSidebar can show it
+        const savedFilesList = approvedFiles.map(r => r.fileName);
+
+        // Exit review mode
+        setBulkReviewMode(false);
+        setBulkReviewQueue([]);
+        setBulkReviewIndex(0);
+        setBulkApprovedResults(new Map());
+        setOriginalContent("");
+        setAnonymizedContent("");
+
+        return { path: selectedPath, files: savedFilesList };
       }
+      return null;
     } catch (e) {
       console.error("Bulk save failed:", e);
-    } finally {
-      // Exit review mode
-      setBulkReviewMode(false);
-      setBulkReviewQueue([]);
-      setBulkReviewIndex(0);
-      setBulkApprovedResults(new Map());
-      setOriginalContent("");
-      setAnonymizedContent("");
+      alert(`保存に失敗しました: ${e}`);
+      return null;
     }
   };
 
