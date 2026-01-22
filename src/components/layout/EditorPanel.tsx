@@ -20,7 +20,7 @@ interface EditorPanelProps {
   isReviewMode?: boolean;
 }
 
-export function EditorPanel({ original = "", modified = "", onAccept, onModifiedChange, activeFileName, isReviewMode = false }: EditorPanelProps) {
+export function EditorPanel({ original = "", modified = "", onModifiedChange, activeFileName }: EditorPanelProps) {
   const hasChanges = original !== modified;
 
   // Focus Mode state
@@ -223,6 +223,8 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
     }
   }, [focusModeEnabled]);
 
+
+
   // Trigger celebration when all complete
   useEffect(() => {
     if (allComplete && !celebrationTriggeredRef.current && hasChanges) {
@@ -370,7 +372,7 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+           <div className="flex items-center gap-2">
               {hasChanges && (
                   <>
                     <button
@@ -380,20 +382,6 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
                     >
                         <Clipboard size={14} />
                         <span>Copy</span>
-                    </button>
-                    {/* Show prominent Apply button when all complete */}
-                    <button
-                        onClick={onAccept}
-                        className={`flex items-center gap-1 text-xs px-3 py-1 rounded shadow-sm transition-all ${
-                          allComplete
-                            ? "bg-green-600 hover:bg-green-700 text-white animate-pulse"
-                            : "bg-slate-400 text-white cursor-not-allowed opacity-60"
-                        }`}
-                        title={allComplete ? (isReviewMode ? "OK" : "全ての変更を適用") : "全ての確認ステップを完了してください"}
-                        disabled={!allComplete}
-                    >
-                        {allComplete ? <Sparkles size={14} /> : <Check size={14} />}
-                        <span>{allComplete ? (isReviewMode ? "OK" : "変更を適用") : (isReviewMode ? "Approve" : "Apply Changes")}</span>
                     </button>
                   </>
               )}
@@ -444,15 +432,8 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
         <div className="bg-green-50 border-b border-green-200 px-4 py-2 flex items-center justify-between">
           <div className="flex items-center gap-2 text-green-700">
             <Sparkles size={16} />
-            <span className="text-sm font-medium">全ての確認が完了しました！</span>
+            <span className="text-sm font-medium">全ての確認が完了しました！チャットの「承認して次へ」ボタンを押して進んでください。</span>
           </div>
-          <button
-            onClick={onAccept}
-            className="flex items-center gap-1 text-sm px-4 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded shadow-sm transition-colors"
-          >
-            <Check size={14} />
-            <span>{isReviewMode ? "OK" : "変更を適用して保存"}</span>
-          </button>
         </div>
       )}
 
@@ -476,28 +457,25 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
       </div>
     </div>
 
-      {/* Completion Celebration Overlay */}
-      {showCompletionCelebration && (
-        <div className="completion-overlay">
-          <div className="completion-icon">
-            <PartyPopper size={40} />
-          </div>
-          <h2 className="completion-title">確認完了！</h2>
-          <p className="completion-subtitle">全ての変更箇所の確認が完了しました</p>
-          <div className="completion-actions">
-            <button
-              className="completion-button-primary"
-              onClick={() => {
-                setShowCompletionCelebration(false);
-                onAccept();
-              }}
-            >
-              <Check size={20} />
-              {isReviewMode ? "OK" : "変更を適用して保存"}
-            </button>
-          </div>
+    {/* Completion Celebration Overlay */}
+    {showCompletionCelebration && (
+      <div className="completion-overlay">
+        <div className="completion-icon">
+          <PartyPopper size={40} />
         </div>
-      )}
-    </>
+        <h2 className="completion-title">確認完了！</h2>
+        <p className="completion-subtitle">チャットの「承認して次へ」ボタンで進んでください</p>
+        <div className="completion-actions">
+          <button
+            className="completion-button-secondary"
+            onClick={() => setShowCompletionCelebration(false)}
+          >
+            <X size={20} />
+            画面を閉じる
+          </button>
+        </div>
+      </div>
+    )}
+  </>
   );
 }
