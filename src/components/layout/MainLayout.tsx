@@ -741,7 +741,7 @@ export function MainLayout() {
       <ApiKeyModal
         isOpen={showApiKeyModal}
         onClose={() => setShowApiKeyModal(false)}
-        onSave={(_key) => {
+        onSaved={() => {
           setHasApiKey(true);
           console.log("API key saved");
         }}

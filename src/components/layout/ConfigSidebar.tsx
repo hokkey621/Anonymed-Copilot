@@ -114,6 +114,7 @@ export function ConfigSidebar({
   const [activeBulkPlan, setActiveBulkPlan] = useState<BulkExecutionPlan | null>(null);
   const [streamingContent, setStreamingContent] = useState<string>("");
   const [thinkingPhase, setThinkingPhase] = useState<string>("");
+  const [isApproving, setIsApproving] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Helper function to filter out thought tags from AI responses
@@ -492,10 +493,15 @@ export function ConfigSidebar({
             <Button
               size="sm"
               variant="default"
-              onClick={onBulkApprove}
-              className="flex-1"
+              onClick={() => {
+                setIsApproving(true);
+                onBulkApprove?.();
+                setTimeout(() => setIsApproving(false), 800);
+              }}
+              className={`flex-1 transition-all duration-300 ${isApproving ? "bg-green-600 hover:bg-green-700 scale-105" : ""}`}
+              disabled={isApproving}
             >
-              {canGoNext ? "承認して次へ" : "承認"}
+              {isApproving ? "承認済!" : (canGoNext ? "承認して次へ" : "承認")}
             </Button>
           </div>
 
