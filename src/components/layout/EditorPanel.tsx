@@ -17,9 +17,10 @@ interface EditorPanelProps {
   onAccept: () => void;
   onModifiedChange?: (value: string) => void;
   activeFileName?: string;
+  isReviewMode?: boolean;
 }
 
-export function EditorPanel({ original = "", modified = "", onAccept, onModifiedChange, activeFileName }: EditorPanelProps) {
+export function EditorPanel({ original = "", modified = "", onAccept, onModifiedChange, activeFileName, isReviewMode = false }: EditorPanelProps) {
   const hasChanges = original !== modified;
 
   // Focus Mode state
@@ -388,11 +389,11 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
                             ? "bg-green-600 hover:bg-green-700 text-white animate-pulse"
                             : "bg-slate-400 text-white cursor-not-allowed opacity-60"
                         }`}
-                        title={allComplete ? "全ての変更を適用" : "全ての確認ステップを完了してください"}
+                        title={allComplete ? (isReviewMode ? "OK" : "全ての変更を適用") : "全ての確認ステップを完了してください"}
                         disabled={!allComplete}
                     >
                         {allComplete ? <Sparkles size={14} /> : <Check size={14} />}
-                        <span>{allComplete ? "変更を適用" : "Apply Changes"}</span>
+                        <span>{allComplete ? (isReviewMode ? "OK" : "変更を適用") : (isReviewMode ? "Approve" : "Apply Changes")}</span>
                     </button>
                   </>
               )}
@@ -450,7 +451,7 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
             className="flex items-center gap-1 text-sm px-4 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded shadow-sm transition-colors"
           >
             <Check size={14} />
-            <span>変更を適用して保存</span>
+            <span>{isReviewMode ? "OK" : "変更を適用して保存"}</span>
           </button>
         </div>
       )}
@@ -492,14 +493,7 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
               }}
             >
               <Check size={20} />
-              変更を適用して保存
-            </button>
-            <button
-              className="completion-button-secondary"
-              onClick={() => setShowCompletionCelebration(false)}
-            >
-              <X size={20} />
-              閉じる
+              {isReviewMode ? "OK" : "変更を適用して保存"}
             </button>
           </div>
         </div>

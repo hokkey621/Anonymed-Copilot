@@ -165,6 +165,8 @@ export function ConfigSidebar({
   };
 
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
+  const allReviewed = bulkReviewMode && fileStatuses.length > 0 && fileStatuses.every(f => f.status !== 'pending');
+  const approvedCount = fileStatuses.filter(f => f.status === 'approved').length;
 
   // Listen for agent progress (including skill matching)
   useEffect(() => {
@@ -452,6 +454,9 @@ export function ConfigSidebar({
       {/* Bulk Review Controls - shown when in review mode */}
       {bulkReviewMode && bulkReviewProgress && (
         <div className="border-t p-3 space-y-2 bg-blue-50 dark:bg-blue-900/20">
+          <div className="text-xs text-blue-700 dark:text-blue-200">
+            一括レビュー中の保存は、チャットの「保存して終了」から行います。
+          </div>
           <div className="flex items-center justify-between text-sm">
             <span className="font-medium">
               ファイル {bulkReviewProgress.current}/{bulkReviewProgress.total}
@@ -519,20 +524,32 @@ export function ConfigSidebar({
             >
               中断
             </button>
-            <Button
-              size="sm"
-              variant="default"
-              onClick={onBulkComplete}
-              className="flex-1"
-            >
-              保存して完了
-            </Button>
           </div>
+          {!canGoNext && (
+            <div className="text-xs text-blue-700 dark:text-blue-200">
+              これが最後のファイルです。承認後に「保存して終了」を押してください。
+            </div>
+          )}
         </div>
       )}
 
       {/* Footer: File indicator + Input */}
       <div className="border-t p-3 space-y-2">
+        {bulkReviewMode && allReviewed && (
+          <div className="flex items-center justify-between gap-2 text-xs bg-blue-50/60 dark:bg-blue-900/20 px-2 py-1.5 rounded border border-blue-200/60 dark:border-blue-700/40">
+            <span className="text-blue-700 dark:text-blue-200">
+              保存対象: {approvedCount} 件
+            </span>
+            <Button
+              size="sm"
+              variant="default"
+              onClick={onBulkComplete}
+              disabled={approvedCount === 0}
+            >
+              保存して終了
+            </Button>
+          </div>
+        )}
         {/* Active Skills indicator */}
         {activeSkills.length > 0 && (
           <div className="flex items-center gap-2 text-xs bg-purple-500/10 px-2 py-1.5 rounded border border-purple-500/20">
