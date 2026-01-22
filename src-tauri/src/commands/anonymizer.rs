@@ -98,11 +98,11 @@ fn detect_purpose_intent(messages: &[ChatMessage]) -> bool {
 
 /// Check if the user message indicates intent to create a plan
 fn detect_planning_intent(messages: &[ChatMessage]) -> bool {
+    use crate::prompts::EXECUTION_KEYWORDS;
+
     if let Some(last_user_msg) = messages.iter().rev().find(|m| m.role == "user") {
         let content = &last_user_msg.content;
-        return ["計画", "プラン", "作成", "立てて"]
-            .iter()
-            .any(|kw| content.contains(kw));
+        return EXECUTION_KEYWORDS.iter().any(|kw| content.contains(kw));
     }
     false
 }
@@ -113,6 +113,7 @@ fn generate_contextual_suggestions(
     is_bulk_request: bool,
     has_purpose: bool,
     plan_created: bool,
+    file_count: usize,
 ) -> Option<Vec<String>> {
     use crate::prompts;
 
@@ -149,8 +150,9 @@ fn generate_contextual_suggestions(
             return Some(prompts::create_plan_options());
         }
 
-        // Anonymization intent expressed - ask for purpose
-        if content.contains("匿名化") && !content.contains("用") {
+        // Anonymization intent expressed OR file is open - ask for purpose
+        // Proactively suggest purposes if a file is loaded, as this is the core value
+        if (content.contains("匿名化") && !content.contains("用")) || file_count > 0 {
             return Some(prompts::anonymization_purpose_options());
         }
     }
@@ -230,6 +232,7 @@ pub async fn agent_chat(
         is_bulk_request,
         has_purpose,
         bulk_plan.is_some(),
+        file_count,
     );
 
     Ok(AgentChatResponse {
@@ -338,10 +341,10 @@ pub async fn agent_chat_streaming(
     );
 
     // Check if user has expressed anonymization purpose
-    // let has_purpose = detect_purpose_intent(&messages); // Unused for trigger now
-    let planning_intent = detect_planning_intent(&messages);
+    let has_purpose = detect_purpose_intent(&messages);
+    // let planning_intent = detect_planning_intent(&messages); // No longer auto-triggering on generic planning intent
 
-    let (bulk_plan, workflow_steps) = if is_bulk_request || planning_intent {
+    let (bulk_plan, workflow_steps) = if is_bulk_request || has_purpose {
         let effective_count = if file_count > 0 { file_count } else { 1 };
         // Estimate 10 seconds per file for LLM processing + overhead
         let estimated_time = (effective_count as u64) * 10000;
@@ -392,6 +395,7 @@ pub async fn agent_chat_streaming(
         is_bulk_request,
         has_purpose,
         bulk_plan.is_some(),
+        file_count,
     );
 
     Ok(AgentChatResponse {
