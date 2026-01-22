@@ -100,7 +100,7 @@ export function ConfigSidebar({
     {
       role: "assistant",
       content: "こんにちは。ユーザーテストへのご協力ありがとうございます！\n\nまずは左上の「File」>「ファイルを開く」から、匿名化したいカルテや資料（テキストファイル）を開いてください。\n\n個人情報は自動的に検出・匿名化されます。",
-      suggestions: ["このファイルについて説明して", "匿名化を実行して", "使い方を教えて"]
+      suggestions: ["匿名化を実行して", "使い方を教えて"]
     }
   ]);
   const [inputInfo, setInputInfo] = useState("");
@@ -130,6 +130,12 @@ export function ConfigSidebar({
     if (cleaned.includes("[/THOUGHT]")) {
       cleaned = cleaned.replace(/[\s\S]*?\[\/THOUGHT\]\s*/i, '');
     }
+
+    // Remove confusing file-upload prompts from assistant responses
+    cleaned = cleaned
+      .split("\n")
+      .filter(line => !/ファイル.*(アップロード|開い).*ください/.test(line))
+      .join("\n");
 
     return cleaned.trim();
   };
@@ -189,7 +195,11 @@ export function ConfigSidebar({
       // Remove [thinking]...[/thinking] blocks
       cleaned = cleaned.replace(/\[thinking\][\s\S]*?\[\/thinking\]\s*/gi, '');
       // Trim leading/trailing whitespace
-      cleaned = cleaned.trim();
+      cleaned = cleaned
+        .split("\n")
+        .filter(line => !/ファイル.*(アップロード|開い).*ください/.test(line))
+        .join("\n")
+        .trim();
       setStreamingContent(cleaned);
     });
     return () => { unlistenStream.then(f => f()); };
