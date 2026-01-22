@@ -75,9 +75,39 @@ const GEMINI_MODEL: &str = "gemini-3-flash-preview";
 impl GeminiHandler {
     fn build_client() -> Result<Client, String> {
         Client::builder()
-            .timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(60))
             .build()
             .map_err(|e| e.to_string())
+    }
+
+    fn redact_query_key(message: &str) -> String {
+        let mut result = String::with_capacity(message.len());
+        let mut slice = message;
+
+        while let Some(idx) = slice.find("key=") {
+            let (before, after) = slice.split_at(idx);
+            result.push_str(before);
+            result.push_str("key=REDACTED");
+
+            let after = &after[4..];
+            if let Some(end_idx) = after.find('&') {
+                result.push_str(&after[end_idx..]);
+                slice = &after[end_idx..];
+            } else {
+                return result;
+            }
+        }
+
+        result.push_str(slice);
+        result
+    }
+
+    fn redact_error_message(&self, message: &str) -> String {
+        let mut redacted = Self::redact_query_key(message);
+        if !self.api_key.is_empty() {
+            redacted = redacted.replace(&self.api_key, "REDACTED");
+        }
+        redacted
     }
 
     /// Create a new handler with an explicit API key
@@ -145,7 +175,7 @@ impl GeminiHandler {
                 .json(request_body)
                 .send()
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| self.redact_error_message(&e.to_string()))?;
 
             if response.status().as_u16() == 503 {
                 if retries >= max_retries {
@@ -161,7 +191,10 @@ impl GeminiHandler {
             if !response.status().is_success() {
                 let status = response.status();
                 let text = response.text().await.unwrap_or_default();
-                return Err(format!("Gemini API Error {}: {}", status, text));
+                return Err(self.redact_error_message(&format!(
+                    "Gemini API Error {}: {}",
+                    status, text
+                )));
             }
             return Ok(response);
         }
@@ -351,12 +384,15 @@ impl GeminiHandler {
             .json(&request_body)
             .send()
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| self.redact_error_message(&e.to_string()))?;
 
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            return Err(format!("Gemini API Error {}: {}", status, text));
+            return Err(self.redact_error_message(&format!(
+                "Gemini API Error {}: {}",
+                status, text
+            )));
         }
 
         let mut full_text = String::new();
