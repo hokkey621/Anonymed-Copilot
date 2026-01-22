@@ -1,13 +1,13 @@
 use crate::domain::model::{AnonPlan, ReplacementEntry};
-use crate::domain::skills::{find_matching_skills, build_prompt_with_skills, get_skill_names};
-use tauri::{AppHandle, Emitter};
+use crate::domain::skills::{build_prompt_with_skills, find_matching_skills, get_skill_names};
 use crate::infrastructure::gemini_handler::GeminiHandler;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use tauri::{AppHandle, Emitter};
 
 #[derive(Serialize, Clone)]
 pub struct AgentProgressEvent {
-    pub step: String, // "Planner", "Executor", "Reviewer"
+    pub step: String,   // "Planner", "Executor", "Reviewer"
     pub status: String, // "In Progress", "Completed", "Failed"
     pub message: String,
 }
@@ -47,7 +47,12 @@ impl AgentOrchestrator {
     /// Step 1: Planner Agent
     /// Decides HOW to anonymize based on user input (task_name) and the text content.
     /// Enhanced with skill-based domain knowledge injection.
-    pub async fn plan_strategy(&self, task_name: &str, text_preview: &str, matching_skills: &[&crate::domain::skills::LoadedSkill]) -> Result<AnonymizationStrategy, String> {
+    pub async fn plan_strategy(
+        &self,
+        task_name: &str,
+        text_preview: &str,
+        matching_skills: &[&crate::domain::skills::LoadedSkill],
+    ) -> Result<AnonymizationStrategy, String> {
         let base_prompt = r#"
         You are a Senior Privacy Architect. Your job is to design an Anonymization Strategy.
         Analyze the task name and the provided text preview.
@@ -70,18 +75,23 @@ impl AgentOrchestrator {
         // Inject skill-based domain knowledge into the prompt
         let system_prompt = build_prompt_with_skills(base_prompt, matching_skills);
 
-        let user_prompt = format!("Task: {}\n\nText Preview (first 1000 chars):\n{}", task_name, text_preview);
+        let user_prompt = format!(
+            "Task: {}\n\nText Preview (first 1000 chars):\n{}",
+            task_name, text_preview
+        );
 
-        self.handler.generate_structure::<AnonymizationStrategy>(
-            &user_prompt,
-            &system_prompt,
-            None
-        ).await
+        self.handler
+            .generate_structure::<AnonymizationStrategy>(&user_prompt, &system_prompt, None)
+            .await
     }
 
     /// Step 2: Executor Agent
     /// Generates the actual replacement list based on the Strategy.
-    pub async fn execute_strategy(&self, strategy: &AnonymizationStrategy, full_text: &str) -> Result<Vec<ReplacementEntry>, String> {
+    pub async fn execute_strategy(
+        &self,
+        strategy: &AnonymizationStrategy,
+        full_text: &str,
+    ) -> Result<Vec<ReplacementEntry>, String> {
         let system_prompt = format!(
             r#"
             You are an Expert Anonymization Executor.
@@ -109,11 +119,14 @@ impl AgentOrchestrator {
             strategy.specific_instructions
         );
 
-        let output = self.handler.generate_structure::<ExecutorOutput>(
-            "Please anonymize the following text:",
-            &system_prompt,
-            Some(full_text)
-        ).await?;
+        let output = self
+            .handler
+            .generate_structure::<ExecutorOutput>(
+                "Please anonymize the following text:",
+                &system_prompt,
+                Some(full_text),
+            )
+            .await?;
 
         Ok(output.replacements)
     }
@@ -125,74 +138,106 @@ impl AgentOrchestrator {
 
     /// Main Orchestration Function
     /// Enhanced with skill-based domain knowledge injection
-    pub async fn run_anonymization_pipeline(&self, app: &AppHandle, text: &str, user_task_input: &str) -> Result<AnonPlan, String> {
+    pub async fn run_anonymization_pipeline(
+        &self,
+        app: &AppHandle,
+        text: &str,
+        user_task_input: &str,
+    ) -> Result<AnonPlan, String> {
         // 0. Find matching skills based on user input
         let matching_skills = find_matching_skills(user_task_input);
         let skill_names = get_skill_names(&matching_skills);
 
         if !matching_skills.is_empty() {
-            let _ = app.emit("agent-progress", AgentProgressEvent {
-                step: "Skills".to_string(),
-                status: "Completed".to_string(),
-                message: format!("Matched skills: {}", skill_names.join(", ")),
-            });
+            let _ = app.emit(
+                "agent-progress",
+                AgentProgressEvent {
+                    step: "Skills".to_string(),
+                    status: "Completed".to_string(),
+                    message: format!("Matched skills: {}", skill_names.join(", ")),
+                },
+            );
         }
 
         // 1. Plan (with skill context)
-        let _ = app.emit("agent-progress", AgentProgressEvent {
-            step: "Planner".to_string(),
-            status: "In Progress".to_string(),
-            message: "Analyzing context and designing strategy...".to_string(),
-        });
+        let _ = app.emit(
+            "agent-progress",
+            AgentProgressEvent {
+                step: "Planner".to_string(),
+                status: "In Progress".to_string(),
+                message: "Analyzing context and designing strategy...".to_string(),
+            },
+        );
 
         let preview = text.chars().take(1000).collect::<String>();
-        let strategy = self.plan_strategy(user_task_input, &preview, &matching_skills).await;
+        let strategy = self
+            .plan_strategy(user_task_input, &preview, &matching_skills)
+            .await;
 
         let strategy = match strategy {
             Ok(s) => {
-                 let _ = app.emit("agent-progress", AgentProgressEvent {
-                    step: "Planner".to_string(),
-                    status: "Completed".to_string(),
-                    message: format!("Strategy defined: {} ({})", s.task_context, s.focus_areas.len()),
-                });
+                let _ = app.emit(
+                    "agent-progress",
+                    AgentProgressEvent {
+                        step: "Planner".to_string(),
+                        status: "Completed".to_string(),
+                        message: format!(
+                            "Strategy defined: {} ({})",
+                            s.task_context,
+                            s.focus_areas.len()
+                        ),
+                    },
+                );
                 s
-            },
+            }
             Err(e) => {
-                 let _ = app.emit("agent-progress", AgentProgressEvent {
-                    step: "Planner".to_string(),
-                    status: "Failed".to_string(),
-                    message: format!("Planning failed: {}", e),
-                });
+                let _ = app.emit(
+                    "agent-progress",
+                    AgentProgressEvent {
+                        step: "Planner".to_string(),
+                        status: "Failed".to_string(),
+                        message: format!("Planning failed: {}", e),
+                    },
+                );
                 return Err(e);
             }
         };
 
         // 2. Execute
-        let _ = app.emit("agent-progress", AgentProgressEvent {
-            step: "Executor".to_string(),
-            status: "In Progress".to_string(),
-            message: "Applying anonymization rules...".to_string(),
-        });
+        let _ = app.emit(
+            "agent-progress",
+            AgentProgressEvent {
+                step: "Executor".to_string(),
+                status: "In Progress".to_string(),
+                message: "Applying anonymization rules...".to_string(),
+            },
+        );
 
         let replacements = self.execute_strategy(&strategy, text).await;
 
         let replacements = match replacements {
-             Ok(r) => {
-                 let _ = app.emit("agent-progress", AgentProgressEvent {
-                    step: "Executor".to_string(),
-                    status: "Completed".to_string(),
-                    message: format!("Generated {} replacements.", r.len()),
-                });
+            Ok(r) => {
+                let _ = app.emit(
+                    "agent-progress",
+                    AgentProgressEvent {
+                        step: "Executor".to_string(),
+                        status: "Completed".to_string(),
+                        message: format!("Generated {} replacements.", r.len()),
+                    },
+                );
                 r
-             },
-             Err(e) => {
-                 let _ = app.emit("agent-progress", AgentProgressEvent {
-                    step: "Executor".to_string(),
-                    status: "Failed".to_string(),
-                    message: format!("Execution failed: {}", e),
-                });
+            }
+            Err(e) => {
+                let _ = app.emit(
+                    "agent-progress",
+                    AgentProgressEvent {
+                        step: "Executor".to_string(),
+                        status: "Failed".to_string(),
+                        message: format!("Execution failed: {}", e),
+                    },
+                );
                 return Err(e);
-             }
+            }
         };
 
         // 3. Assemble Result (with applied skills)

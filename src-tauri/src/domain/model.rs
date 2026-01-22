@@ -1,8 +1,9 @@
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MedicalRecord {
     pub id: String,
     pub content: String,
@@ -10,6 +11,7 @@ pub struct MedicalRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ReplacementEntry {
     pub original: String,
     pub replacement: String,
@@ -22,6 +24,7 @@ pub struct ReplacementEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AnonPlan {
     pub task_name: String,
     pub global_rules: HashMap<String, Value>,
@@ -32,12 +35,14 @@ pub struct AnonPlan {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentResponse {
     pub message: String,
     pub plan: AnonPlan,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FileEntry {
     pub name: String,
     pub path: String,
@@ -46,6 +51,7 @@ pub struct FileEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AuditLog {
     pub task_context: String,
     pub applied_rules: Vec<String>,
@@ -58,6 +64,7 @@ pub struct AuditLog {
 
 /// Plan for bulk execution across multiple files
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BulkExecutionPlan {
     pub target_count: usize,
     pub estimated_time_ms: u64,
@@ -66,6 +73,7 @@ pub struct BulkExecutionPlan {
 
 /// Individual step in a workflow
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkflowStep {
     pub id: String,
     pub label: String,

@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 export interface FileEntry {
   path: string;
   filename: string;
-  is_dir: boolean;
+  isDir: boolean;
 }
 
 export interface OpenedFileInfo {
@@ -54,7 +54,7 @@ export function FileTreeNode({
 }: FileTreeNodeProps) {
   const baseIndent = 16; // px per depth level
 
-  if (file.is_dir) {
+  if (file.isDir) {
     return (
       <div>
         <div
@@ -91,13 +91,16 @@ export function FileTreeNode({
   }
 
   // ファイル（末端ノード）
+  const selectionClass = isSelected
+    ? "bg-emerald-50/70 text-emerald-700 ring-1 ring-emerald-400/60 dark:bg-emerald-900/20 dark:text-emerald-300 dark:ring-emerald-500/40"
+    : "hover:bg-slate-100 dark:hover:bg-slate-800/70";
+
   return (
     <div
       className={cn(
         "flex items-center py-3 cursor-pointer text-base select-none transition-colors group font-mono overflow-hidden",
-        isActive
-          ? "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
-          : "hover:bg-slate-100 dark:hover:bg-slate-800/70"
+        selectionClass,
+        isActive && "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
       )}
       style={{ paddingLeft: `${depth * baseIndent + 12}px`, paddingRight: "12px" }}
       onClick={() => onFileClick(file.path, file.filename)}

@@ -18,9 +18,9 @@ interface Message {
 }
 
 interface BulkExecutionPlan {
-  target_count: number;
-  estimated_time_ms: number;
-  policy_summary: string[];
+  targetCount: number;
+  estimatedTimeMs: number;
+  policySummary: string[];
 }
 
 interface WorkflowStep {
@@ -32,16 +32,16 @@ interface WorkflowStep {
 interface BulkProgressEvent {
   completed: number;
   total: number;
-  current_file: string;
-  step_id: string;
-  step_status: string;
-  step_message: string;
+  currentFile: string;
+  stepId: string;
+  stepStatus: string;
+  stepMessage: string;
 }
 
 interface AgentChatResponse {
   message: string;
-  bulk_plan: BulkExecutionPlan | null;
-  workflow_steps: WorkflowStep[] | null;
+  bulkPlan: BulkExecutionPlan | null;
+  workflowSteps: WorkflowStep[] | null;
   suggestions: string[] | null;
 }
 
@@ -63,7 +63,7 @@ interface ConfigSidebarProps {
   onBulkSkip?: () => void;
   onBulkCancel?: () => void;
   onBulkPrevious?: () => void;
-  onBulkComplete?: () => void;
+  onBulkComplete?: () => Promise<{ path: string; files: string[] } | null | void>;
   canGoPrevious?: boolean;
   canGoNext?: boolean;
   fileStatuses?: { path: string; fileName: string; status: 'approved' | 'skipped' | 'pending' }[];
@@ -100,7 +100,7 @@ export function ConfigSidebar({
     {
       role: "assistant",
       content: "こんにちは。ユーザーテストへのご協力ありがとうございます！\n\nまずは左上の「File」>「ファイルを開く」から、匿名化したいカルテや資料（テキストファイル）を開いてください。\n\n個人情報は自動的に検出・匿名化されます。",
-      suggestions: ["このファイルについて説明して", "匿名化を実行して", "使い方を教えて"]
+      suggestions: ["匿名化を実行して", "使い方を教えて"]
     }
   ]);
   const [inputInfo, setInputInfo] = useState("");
@@ -114,6 +114,7 @@ export function ConfigSidebar({
   const [activeBulkPlan, setActiveBulkPlan] = useState<BulkExecutionPlan | null>(null);
   const [streamingContent, setStreamingContent] = useState<string>("");
   const [thinkingPhase, setThinkingPhase] = useState<string>("");
+  const [isApproving, setIsApproving] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Helper function to filter out thought tags from AI responses
@@ -131,7 +132,24 @@ export function ConfigSidebar({
       cleaned = cleaned.replace(/[\s\S]*?\[\/THOUGHT\]\s*/i, '');
     }
 
+    // Remove confusing file-upload prompts from assistant responses
+    cleaned = cleaned
+      .split("\n")
+      .filter(line => !/ファイル.*(アップロード|開い).*ください/.test(line))
+      .join("\n");
+
     return cleaned.trim();
+  };
+
+  const resolveResponseContent = (raw: string, userInput: string): string => {
+    const cleaned = filterThoughtTags(raw);
+    if (cleaned) return cleaned;
+
+    if (/使い方|ヘルプ|help/i.test(userInput)) {
+      return "使い方の概要:\n1. 左上のメニューからファイルを開く\n2. 右のチャットで「匿名化を実行」など指示\n3. 変更内容を確認して保存";
+    }
+
+    return "すみません、もう一度質問を言い換えてもらえますか？";
   };
 
   // Keywords that indicate file content should be sent to the LLM
@@ -148,6 +166,8 @@ export function ConfigSidebar({
   };
 
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
+  const allReviewed = bulkReviewMode && fileStatuses.length > 0 && fileStatuses.every(f => f.status !== 'pending');
+  const approvedCount = fileStatuses.filter(f => f.status === 'approved').length;
 
   // Listen for agent progress (including skill matching)
   useEffect(() => {
@@ -167,12 +187,12 @@ export function ConfigSidebar({
   // Listen for bulk progress
   useEffect(() => {
     const unlisten = listen<BulkProgressEvent>("bulk-progress", (event) => {
-      const { completed, total, current_file, step_id, step_status } = event.payload;
-      setBulkProgress({ completed, total, currentFile: current_file });
+      const { completed, total, currentFile, stepId, stepStatus } = event.payload;
+      setBulkProgress({ completed, total, currentFile });
       setWorkflowSteps(prev => prev.map(step =>
-        step.id === step_id ? { ...step, status: step_status as WorkflowStep['status'] } : step
+        step.id === stepId ? { ...step, status: stepStatus as WorkflowStep['status'] } : step
       ));
-      if (step_id === "audit" && step_status === "completed") {
+      if (stepId === "audit" && stepStatus === "completed") {
         setIsBulkExecuting(false);
       }
     });
@@ -189,7 +209,11 @@ export function ConfigSidebar({
       // Remove [thinking]...[/thinking] blocks
       cleaned = cleaned.replace(/\[thinking\][\s\S]*?\[\/thinking\]\s*/gi, '');
       // Trim leading/trailing whitespace
-      cleaned = cleaned.trim();
+      cleaned = cleaned
+        .split("\n")
+        .filter(line => !/ファイル.*(アップロード|開い).*ください/.test(line))
+        .join("\n")
+        .trim();
       setStreamingContent(cleaned);
     });
     return () => { unlistenStream.then(f => f()); };
@@ -223,20 +247,7 @@ export function ConfigSidebar({
     const newHistory = [...messages, userMsg];
     let apiMessages = newHistory.map(m => ({ role: m.role, content: m.content }));
 
-    // Only include file content when needed for anonymization plan
-    if (needsFileContent && currentContent && currentContent.trim().length > 0) {
-      if (messages.length === 1) {
-        apiMessages = [
-          messages[0],
-          { role: "user", content: `Context Document:\n${currentContent}\n\nUser Question: ${inputInfo}` }
-        ];
-      } else {
-        const firstUserIndex = apiMessages.findIndex(m => m.role === "user");
-        if (firstUserIndex !== -1) {
-          apiMessages[firstUserIndex].content = `[Document Context]:\n${currentContent}\n\n[User]: ${apiMessages[firstUserIndex].content}`;
-        }
-      }
-    }
+    // NOTE: ファイル内容は editorContent 経由でのみ送信し、二重送信を避ける
 
     try {
       // Start with empty streaming content
@@ -250,17 +261,17 @@ export function ConfigSidebar({
 
       const newMessage: Message = {
         role: "assistant",
-        content: filterThoughtTags(response.message),
-        bulkPlan: response.bulk_plan || undefined,
-        workflowSteps: response.workflow_steps || undefined,
+        content: resolveResponseContent(response.message, inputInfo),
+        bulkPlan: response.bulkPlan || undefined,
+        workflowSteps: response.workflowSteps || undefined,
         suggestions: response.suggestions || undefined
       };
 
       setMessages(prev => [...prev, newMessage]);
 
-      if (response.bulk_plan && response.workflow_steps) {
-        setActiveBulkPlan(response.bulk_plan);
-        setWorkflowSteps(response.workflow_steps);
+      if (response.bulkPlan && response.workflowSteps) {
+        setActiveBulkPlan(response.bulkPlan);
+        setWorkflowSteps(response.workflowSteps);
       }
 
       // Auto-detect task context
@@ -298,7 +309,7 @@ export function ConfigSidebar({
 
     // Fallback: Old bulk execute (direct save without review)
     setIsBulkExecuting(true);
-    setBulkProgress({ completed: 0, total: activeBulkPlan?.target_count || 1 });
+    setBulkProgress({ completed: 0, total: activeBulkPlan?.targetCount || 1 });
 
     try {
       if (currentDirPath && currentPlan) {
@@ -363,13 +374,7 @@ export function ConfigSidebar({
                 const newHistory = [...messages, userMsg];
                 let apiMessages = newHistory.map(m => ({ role: m.role, content: m.content }));
 
-                // Only include file content when needed for anonymization plan
-                if (needsFileContent && currentContent && currentContent.trim().length > 0) {
-                  const firstUserIndex = apiMessages.findIndex(m => m.role === "user");
-                  if (firstUserIndex !== -1) {
-                    apiMessages[firstUserIndex].content = `[Document Context]:\n${currentContent}\n\n[User]: ${apiMessages[firstUserIndex].content}`;
-                  }
-                }
+                // NOTE: ファイル内容は editorContent 経由でのみ送信し、二重送信を避ける
 
                 try {
                   setStreamingContent("");
@@ -381,17 +386,17 @@ export function ConfigSidebar({
 
                   const newMessage: Message = {
                     role: "assistant",
-                    content: filterThoughtTags(response.message),
-                    bulkPlan: response.bulk_plan || undefined,
-                    workflowSteps: response.workflow_steps || undefined,
+                    content: resolveResponseContent(response.message, text),
+                    bulkPlan: response.bulkPlan || undefined,
+                    workflowSteps: response.workflowSteps || undefined,
                     suggestions: response.suggestions || undefined
                   };
 
                   setMessages(prev => [...prev, newMessage]);
 
-                  if (response.bulk_plan && response.workflow_steps) {
-                    setActiveBulkPlan(response.bulk_plan);
-                    setWorkflowSteps(response.workflow_steps);
+                  if (response.bulkPlan && response.workflowSteps) {
+                    setActiveBulkPlan(response.bulkPlan);
+                    setWorkflowSteps(response.workflowSteps);
                   }
                 } catch (e) {
                   console.error("Chat error:", e);
@@ -450,6 +455,9 @@ export function ConfigSidebar({
       {/* Bulk Review Controls - shown when in review mode */}
       {bulkReviewMode && bulkReviewProgress && (
         <div className="border-t p-3 space-y-2 bg-blue-50 dark:bg-blue-900/20">
+          <div className="text-xs text-blue-700 dark:text-blue-200">
+            一括レビュー中の保存は、チャットの「保存して終了」から行います。
+          </div>
           <div className="flex items-center justify-between text-sm">
             <span className="font-medium">
               ファイル {bulkReviewProgress.current}/{bulkReviewProgress.total}
@@ -485,10 +493,15 @@ export function ConfigSidebar({
             <Button
               size="sm"
               variant="default"
-              onClick={onBulkApprove}
-              className="flex-1"
+              onClick={() => {
+                setIsApproving(true);
+                onBulkApprove?.();
+                setTimeout(() => setIsApproving(false), 800);
+              }}
+              className={`flex-1 transition-all duration-300 ${isApproving ? "bg-green-600 hover:bg-green-700 scale-105" : ""}`}
+              disabled={isApproving}
             >
-              {canGoNext ? "承認して次へ" : "承認"}
+              {isApproving ? "承認済!" : (canGoNext ? "承認して次へ" : "承認")}
             </Button>
           </div>
 
@@ -517,20 +530,48 @@ export function ConfigSidebar({
             >
               中断
             </button>
-            <Button
-              size="sm"
-              variant="default"
-              onClick={onBulkComplete}
-              className="flex-1"
-            >
-              保存して完了
-            </Button>
           </div>
+          {!canGoNext && (
+            <div className="text-xs text-blue-700 dark:text-blue-200">
+              これが最後のファイルです。承認後に「保存して終了」を押してください。
+            </div>
+          )}
         </div>
       )}
 
       {/* Footer: File indicator + Input */}
       <div className="border-t p-3 space-y-2">
+        {bulkReviewMode && allReviewed && (
+          <div className="flex items-center justify-between gap-2 text-xs bg-blue-50/60 dark:bg-blue-900/20 px-2 py-1.5 rounded border border-blue-200/60 dark:border-blue-700/40">
+            <span className="text-blue-700 dark:text-blue-200">
+              保存対象: {approvedCount} 件
+            </span>
+            <Button
+              size="sm"
+              variant="default"
+              onClick={async () => {
+                if (onBulkComplete) {
+                  const result = await onBulkComplete();
+                  if (result && typeof result === 'object' && 'path' in result) {
+                    setMessages(prev => [...prev, {
+                      role: "assistant",
+                      content: `✅ 保存が完了しました！\n\n**保存先:**\n\`${result.path}\`\n\n**保存されたファイル (${result.files.length}件):**\n${result.files.map(f => `- ${f}`).join('\n')}`
+                    }]);
+                  } else if (typeof result === 'string') {
+                    // Fallback for string return
+                     setMessages(prev => [...prev, {
+                      role: "assistant",
+                      content: `✅ 保存が完了しました！\n\n**保存先:**\n\`${result}\``
+                    }]);
+                  }
+                }
+              }}
+              disabled={approvedCount === 0}
+            >
+              保存して終了
+            </Button>
+          </div>
+        )}
         {/* Active Skills indicator */}
         {activeSkills.length > 0 && (
           <div className="flex items-center gap-2 text-xs bg-purple-500/10 px-2 py-1.5 rounded border border-purple-500/20">

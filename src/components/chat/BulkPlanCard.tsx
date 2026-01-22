@@ -2,9 +2,9 @@ import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 interface BulkExecutionPlan {
-  target_count: number;
-  estimated_time_ms: number;
-  policy_summary: string[];
+  targetCount: number;
+  estimatedTimeMs: number;
+  policySummary: string[];
 }
 
 interface WorkflowStep {
@@ -27,7 +27,7 @@ interface BulkPlanCardProps {
 
 export function BulkPlanCard({ plan, onCommit, isExecuting, progress }: BulkPlanCardProps) {
   const progressPercent = progress ? Math.round((progress.completed / progress.total) * 100) : 0;
-  const estimatedSeconds = Math.ceil(plan.estimated_time_ms / 1000);
+  const estimatedSeconds = Math.ceil(plan.estimatedTimeMs / 1000);
 
   return (
     <div className="rounded-md border bg-muted/30 text-sm">
@@ -35,7 +35,7 @@ export function BulkPlanCard({ plan, onCommit, isExecuting, progress }: BulkPlan
       <div className="px-3 py-2 border-b bg-muted/50 flex items-center justify-between">
         <span className="font-medium">確認と実行</span>
         <span className="text-xs text-muted-foreground">
-          {plan.target_count} ファイル · 約{estimatedSeconds}秒
+          {plan.targetCount} ファイル · 約{estimatedSeconds}秒
         </span>
       </div>
 

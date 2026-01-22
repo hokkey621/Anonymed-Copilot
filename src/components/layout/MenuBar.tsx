@@ -9,9 +9,20 @@ interface MenuBarProps {
   onOpenSettings?: () => void;
   activeFileName?: string;
   hasUnsavedChanges?: boolean;
+  disableSave?: boolean;
+  isReviewMode?: boolean;
 }
 
-export function MenuBar({ onOpenFile, onOpenFolder, onSaveFile, onOpenSettings, activeFileName, hasUnsavedChanges }: MenuBarProps) {
+export function MenuBar({
+  onOpenFile,
+  onOpenFolder,
+  onSaveFile,
+  onOpenSettings,
+  activeFileName,
+  hasUnsavedChanges,
+  disableSave = false,
+  isReviewMode = false,
+}: MenuBarProps) {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -67,8 +78,17 @@ export function MenuBar({ onOpenFile, onOpenFolder, onSaveFile, onOpenSettings, 
             </button>
             <div className="border-t my-1" />
             <button
-              className="w-full px-3 py-1.5 text-left hover:bg-accent flex items-center gap-2"
-              onClick={() => handleAction(onSaveFile)}
+              className={`w-full px-3 py-1.5 text-left flex items-center gap-2 ${
+                disableSave ? "text-muted-foreground/50 cursor-not-allowed" : "hover:bg-accent"
+              }`}
+              onClick={() => {
+                if (!disableSave) {
+                  handleAction(onSaveFile);
+                }
+              }}
+              disabled={disableSave}
+              aria-disabled={disableSave}
+              title={disableSave ? (isReviewMode ? "レビュー完了後に保存してください" : "保存できません") : undefined}
             >
               <Save size={14} />
               <span>名前を付けて保存</span>

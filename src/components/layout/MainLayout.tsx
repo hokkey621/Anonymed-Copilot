@@ -18,19 +18,19 @@ interface OpenFileResult {
 }
 
 interface SaveFileResult {
-  saved_path: string;
-  audit_log_path: string;
+  savedPath: string;
+  auditLogPath: string;
 }
 
 interface FolderFileEntry {
   path: string;
   filename: string;
-  is_dir: boolean;
+  isDir: boolean;
 }
 
 interface OpenFolderResult {
-  folder_path: string;
-  folder_name: string;
+  folderPath: string;
+  folderName: string;
   files: FolderFileEntry[];
 }
 
@@ -63,6 +63,16 @@ export function MainLayout() {
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const [_hasApiKey, setHasApiKey] = useState(true); // Assume true initially
 
+  const formatError = (error: unknown): string => {
+    if (typeof error === "string") return error;
+    if (error instanceof Error) return error.message;
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  };
+
   // Check for API key on mount
   useEffect(() => {
     const checkApiKey = async () => {
@@ -85,11 +95,14 @@ export function MainLayout() {
   // Open file from dialog
   const handleOpenFile = async () => {
     try {
+      console.info("[UI] Open file dialog");
       const result = await invoke<OpenFileResult | null>("open_file");
       if (result) {
+        console.info("[UI] File opened:", { path: result.path, name: result.filename, size: result.content.length });
         // Check if already open
         const existing = openedFiles.find(f => f.path === result.path);
         if (existing) {
+          console.info("[UI] File already open, focusing:", result.path);
           setActiveFilePath(result.path);
           setOriginalContent(existing.originalContent);
           setAnonymizedContent(existing.modifiedContent);
@@ -113,19 +126,25 @@ export function MainLayout() {
         setCurrentPlan(newPlan);
       }
     } catch (e) {
-      console.error("Failed to open file:", e);
+      console.error("[UI] Failed to open file:", e);
     }
   };
 
   // Open folder from dialog
   const handleOpenFolder = async () => {
     try {
+      console.info("[UI] Open folder dialog");
       const result = await invoke<OpenFolderResult | null>("open_folder");
       if (result) {
-        setCurrentFolder({ path: result.folder_path, name: result.folder_name });
+        console.info("[UI] Folder opened:", {
+          path: result.folderPath,
+          name: result.folderName,
+          files: result.files.length,
+        });
+        setCurrentFolder({ path: result.folderPath, name: result.folderName });
         setFolderFiles(result.files);
         // Select all non-directory files by default
-        const allFilePaths = result.files.filter(f => !f.is_dir).map(f => f.path);
+        const allFilePaths = result.files.filter(f => !f.isDir).map(f => f.path);
         setSelectedFilesForBulk(new Set(allFilePaths));
         // Reset opened files when opening new folder
         setOpenedFiles([]);
@@ -134,16 +153,18 @@ export function MainLayout() {
         setAnonymizedContent("");
       }
     } catch (e) {
-      console.error("Failed to open folder:", e);
+      console.error("[UI] Failed to open folder:", e);
     }
   };
 
   // Open a file from folder tree
   const handleOpenFileFromTree = async (filePath: string, filename: string) => {
     try {
+      console.info("[UI] Read file from tree:", { path: filePath, name: filename });
       const result = await invoke<OpenFileResult>("read_file_content", { filePath });
       const existing = openedFiles.find(f => f.path === filePath);
       if (existing) {
+        console.info("[UI] File already open from tree, focusing:", filePath);
         setActiveFilePath(filePath);
         setOriginalContent(existing.originalContent);
         setAnonymizedContent(existing.modifiedContent);
@@ -166,7 +187,7 @@ export function MainLayout() {
       setAnonymizedContent(result.content);
       setCurrentPlan(newPlan);
     } catch (e) {
-      console.error("Failed to read file:", e);
+      console.error("[UI] Failed to read file:", e);
     }
   };
 
@@ -202,6 +223,7 @@ export function MainLayout() {
   const handleSaveFile = async () => {
     if (!anonymizedContent || !activeFile) return;
     try {
+      console.info("[UI] Save file (single):", activeFile.filename);
       const result = await invoke<SaveFileResult | null>("save_anonymized_file", {
         content: anonymizedContent,
         originalFilename: activeFile.filename,
@@ -209,15 +231,16 @@ export function MainLayout() {
         appliedPlan: currentPlan,
       });
       if (result) {
-        console.log("File saved:", result.saved_path);
-        console.log("Audit log:", result.audit_log_path);
+        console.info("[UI] File saved:", result.savedPath);
+        console.info("[UI] Audit log:", result.auditLogPath);
+        alert(`保存しました:\n${result.savedPath}`);
         // Mark as no changes
         setOpenedFiles(prev =>
           prev.map(f => f.path === activeFilePath ? { ...f, hasChanges: false } : f)
         );
       }
     } catch (e) {
-      console.error("Failed to save file:", e);
+      console.error("[UI] Failed to save file:", e);
     }
   };
 
@@ -226,18 +249,44 @@ export function MainLayout() {
     if (!originalContent) return;
     setIsProcessing(true);
     try {
+        console.info("[UI] Analyze text request:", { task, length: originalContent.length });
         const plan = await invoke<AnonPlan>("analyze_text", { text: originalContent, taskContext: task });
         setCurrentPlan(plan);
+        console.info("[UI] Apply plan request:", { replacements: plan.replacements?.length ?? 0 });
         const result = await invoke<string>("apply_plan", { text: originalContent, plan });
-        setAnonymizedContent(result);
-        // Mark file as having changes
-        if (activeFilePath) {
-          setOpenedFiles(prev =>
-            prev.map(f => f.path === activeFilePath ? { ...f, hasChanges: true, modifiedContent: result, plan } : f)
-          );
+
+        // Single File -> Start "Bulk Review Mode" with 1 file
+        // This unifies the UX: Approve -> Save All
+        if (activeFilePath && activeFile) {
+            console.log("[UI] Entering Unified Review Mode for single file");
+            const singleItem = {
+                path: activeFilePath,
+                fileName: activeFile.filename,
+                original: originalContent,
+                anonymized: result,
+                plan: plan
+            };
+
+            setBulkReviewQueue([singleItem]);
+            setBulkReviewIndex(0);
+            setBulkApprovedResults(new Map());
+            setBulkReviewMode(true);
+
+            // Set content for editor
+            setAnonymizedContent(result);
+
+            // Mark file as having changes
+            setOpenedFiles(prev =>
+              prev.map(f => f.path === activeFilePath ? { ...f, hasChanges: true, modifiedContent: result, plan } : f)
+            );
+        } else {
+             // Fallback if no file is technically "open" (e.g. pasted text?)
+             // For now we assume a file is open since we require it.
+             setAnonymizedContent(result);
         }
+
     } catch (e) {
-        console.error("Anonymization failed:", e);
+        console.error("[UI] Anonymization failed:", e);
         setAnonymizedContent(`Error: ${e}`);
     } finally {
         setIsProcessing(false);
@@ -249,6 +298,7 @@ export function MainLayout() {
       if (!anonymizedContent) return;
 
       try {
+          console.info("[UI] Create audit report");
           // Create internal audit record
           await invoke("create_audit_report", {
               finalContent: anonymizedContent,
@@ -257,6 +307,7 @@ export function MainLayout() {
 
           // If a file is open, trigger save dialog
           if (activeFile) {
+            console.info("[UI] Save file (accept):", activeFile.filename);
             const result = await invoke<SaveFileResult | null>("save_anonymized_file", {
               content: anonymizedContent,
               originalFilename: activeFile.filename,
@@ -264,8 +315,9 @@ export function MainLayout() {
               appliedPlan: currentPlan,
             });
             if (result) {
-              console.log("File saved:", result.saved_path);
-              console.log("Audit log:", result.audit_log_path);
+              console.info("[UI] File saved:", result.savedPath);
+              console.info("[UI] Audit log:", result.auditLogPath);
+              alert(`保存しました:\n${result.savedPath}`);
               // Mark as no changes
               setOpenedFiles(prev =>
                 prev.map(f => f.path === activeFilePath ? { ...f, hasChanges: false } : f)
@@ -288,9 +340,9 @@ export function MainLayout() {
               } : f)
             );
           }
-          console.log("Anonymization approved and saved.");
+          console.info("[UI] Anonymization approved and saved.");
       } catch (e) {
-          console.error("Save failed:", e);
+          console.error("[UI] Save failed:", e);
       }
   };
 
@@ -303,7 +355,7 @@ export function MainLayout() {
     const targetFiles = Array.from(selectedFilesForBulk);
     const total = targetFiles.length;
 
-    // Start analysis phase
+    // Start analysis phase (total may be adjusted after read)
     setBulkAnalysisProgress({ completed: 0, total, isAnalyzing: true });
     setIsProcessing(true);
 
@@ -311,6 +363,7 @@ export function MainLayout() {
       // Read all file contents first
       console.log("[Bulk Review] Starting with files:", targetFiles);
       const fileContents: {path: string, fileName: string, content: string}[] = [];
+      const readFailures: { fileName: string; error: string }[] = [];
       for (const filePath of targetFiles) {
         try {
           console.log("[Bulk Review] Reading file:", filePath);
@@ -318,24 +371,67 @@ export function MainLayout() {
           console.log("[Bulk Review] Read success:", result.filename, "content length:", result.content.length);
           fileContents.push({ path: filePath, fileName: result.filename, content: result.content });
         } catch (readError) {
-          console.error("[Bulk Review] Failed to read file:", filePath, readError);
+          console.error("[Bulk Review] Failed to read file:", {
+            path: filePath,
+            error: readError,
+          });
+          readFailures.push({
+            fileName: filePath.split("/").pop() || filePath,
+            error: formatError(readError),
+          });
         }
       }
-      console.log("[Bulk Review] Total files read:", fileContents.length);
+      console.log("[Bulk Review] Total files read:", fileContents.length, "of", targetFiles.length);
+      if (fileContents.length > 0) {
+        console.log(
+          "[Bulk Review] Read files:",
+          fileContents.map((f) => ({
+            name: f.fileName,
+            path: f.path,
+            size: f.content.length,
+          }))
+        );
+      }
+
+      if (readFailures.length > 0) {
+        console.warn("[Bulk Review] Read failures:", readFailures);
+        alert(
+          `読み込みに失敗したファイルがあります:\n${readFailures
+            .map(f => `- ${f.fileName}: ${f.error}`)
+            .join("\n")}`
+        );
+      }
+
+      setBulkAnalysisProgress(prev => ({
+        ...prev,
+        total: fileContents.length,
+        completed: 0
+      }));
 
       // Analyze each file with AI in parallel (Promise.all with progress tracking)
       let completedCount = 0;
+      const analysisFailures: { fileName: string; error: string }[] = [];
       const analysisPromises = fileContents.map(async (file) => {
         try {
+          console.log("[Bulk Review] Analyzing:", file.fileName, file.path);
           // Call analyze_text for this specific file
           const plan = await invoke<AnonPlan>("analyze_text", {
             text: file.content,
             taskContext
           });
+          console.log("[Bulk Review] Plan generated:", {
+            file: file.fileName,
+            replacements: plan.replacements?.length ?? 0,
+            status: plan.status,
+          });
           // Apply the plan
           const anonymized = await invoke<string>("apply_plan", {
             text: file.content,
             plan
+          });
+          console.log("[Bulk Review] Apply plan complete:", {
+            file: file.fileName,
+            outputSize: anonymized.length,
           });
 
           // Update progress
@@ -350,7 +446,12 @@ export function MainLayout() {
             plan,
           };
         } catch (e) {
-          console.error(`Failed to analyze ${file.fileName}:`, e);
+          console.error("[Bulk Review] Failed to analyze:", {
+            file: file.fileName,
+            path: file.path,
+            error: e,
+          });
+          analysisFailures.push({ fileName: file.fileName, error: formatError(e) });
           completedCount++;
           setBulkAnalysisProgress(prev => ({ ...prev, completed: completedCount }));
           return null;
@@ -360,6 +461,15 @@ export function MainLayout() {
       const results = await Promise.all(analysisPromises);
       const validResults = results.filter((r): r is NonNullable<typeof r> => r !== null);
       console.log("[Bulk Review] Valid results:", validResults.length, "of", results.length);
+
+      if (analysisFailures.length > 0) {
+        console.warn("[Bulk Review] Analysis failures:", analysisFailures);
+        alert(
+          `解析に失敗したファイルがあります:\n${analysisFailures
+            .map(f => `- ${f.fileName}: ${f.error}`)
+            .join("\n")}`
+        );
+      }
 
       // Check if we have any valid results
       if (validResults.length === 0) {
@@ -446,7 +556,7 @@ export function MainLayout() {
   };
 
   // Complete bulk review: show save dialog and save
-  const handleBulkComplete = async () => {
+  const handleBulkComplete = async (): Promise<{ path: string; files: string[] } | null> => {
     // Get only approved files
     const approvedFiles = Array.from(bulkApprovedResults.values()).filter(r => r.status === 'approved');
     if (approvedFiles.length === 0) {
@@ -454,7 +564,7 @@ export function MainLayout() {
       setBulkReviewMode(false);
       setOriginalContent("");
       setAnonymizedContent("");
-      return;
+      return null;
     }
 
     try {
@@ -467,23 +577,42 @@ export function MainLayout() {
       });
 
       if (selectedPath && typeof selectedPath === "string") {
-        const itemsToSave = approvedFiles.map(r => ({ fileName: r.fileName, content: r.content }));
+        const itemsToSave = approvedFiles.map(r => ({ file_name: r.fileName, content: r.content }));
+        console.info("[Bulk Review] Save request:", {
+          outputDir: selectedPath,
+          files: itemsToSave.map(f => f.file_name),
+        });
         await invoke("bulk_save", {
           outputDir: selectedPath,
           items: itemsToSave,
         });
-        console.log(`Saved ${approvedFiles.length} files to ${selectedPath}`);
+        console.info(`Saved ${approvedFiles.length} files to ${selectedPath}`);
+
+        // Open the directory in OS explorer
+        try {
+          await invoke("open_directory", { path: selectedPath });
+        } catch (openErr) {
+          console.warn("Failed to open directory:", openErr);
+        }
+
+        // Return the path and files so ConfigSidebar can show it
+        const savedFilesList = approvedFiles.map(r => r.fileName);
+
+        // Exit review mode
+        setBulkReviewMode(false);
+        setBulkReviewQueue([]);
+        setBulkReviewIndex(0);
+        setBulkApprovedResults(new Map());
+        setOriginalContent("");
+        setAnonymizedContent("");
+
+        return { path: selectedPath, files: savedFilesList };
       }
+      return null;
     } catch (e) {
       console.error("Bulk save failed:", e);
-    } finally {
-      // Exit review mode
-      setBulkReviewMode(false);
-      setBulkReviewQueue([]);
-      setBulkReviewIndex(0);
-      setBulkApprovedResults(new Map());
-      setOriginalContent("");
-      setAnonymizedContent("");
+      alert(`保存に失敗しました: ${e}`);
+      return null;
     }
   };
 
@@ -509,6 +638,8 @@ export function MainLayout() {
         onOpenSettings={() => setShowApiKeyModal(true)}
         activeFileName={activeFile?.filename}
         hasUnsavedChanges={hasUnsavedChanges}
+        disableSave={bulkReviewMode}
+        isReviewMode={bulkReviewMode}
       />
 
       {/* Main Content Area */}
@@ -551,7 +682,8 @@ export function MainLayout() {
               <EditorPanel
                   original={originalContent}
                   modified={anonymizedContent}
-                  onAccept={handleAccept}
+                  onAccept={bulkReviewMode ? handleBulkApprove : handleAccept}
+                  isReviewMode={bulkReviewMode}
                   onModifiedChange={(value) => {
                     setAnonymizedContent(value);
                     if (activeFilePath) {
@@ -578,7 +710,7 @@ export function MainLayout() {
                 isProcessing={isProcessing}
                 currentContent={originalContent}
                 currentPlan={currentPlan}
-                fileCount={selectedFilesForBulk.size > 0 ? selectedFilesForBulk.size : folderFiles.filter(f => !f.is_dir).length}
+                fileCount={selectedFilesForBulk.size > 0 ? selectedFilesForBulk.size : folderFiles.filter(f => !f.isDir).length}
                 currentFileName={activeFile?.filename}
                 currentDirPath={currentFolder?.path}
                 selectedFilePaths={Array.from(selectedFilesForBulk)}
@@ -609,7 +741,7 @@ export function MainLayout() {
       <ApiKeyModal
         isOpen={showApiKeyModal}
         onClose={() => setShowApiKeyModal(false)}
-        onSave={(_key) => {
+        onSaved={() => {
           setHasApiKey(true);
           console.log("API key saved");
         }}

@@ -1,6 +1,10 @@
 use crate::domain::model::AnonPlan;
 
-pub fn apply_plan_to_text(text: &str, plan: &AnonPlan, error_on_missing: bool) -> Result<String, String> {
+pub fn apply_plan_to_text(
+    text: &str,
+    plan: &AnonPlan,
+    error_on_missing: bool,
+) -> Result<String, String> {
     let mut replacements = plan.replacements.clone();
     replacements.sort_by(|a, b| b.start.cmp(&a.start));
 
@@ -10,8 +14,25 @@ pub fn apply_plan_to_text(text: &str, plan: &AnonPlan, error_on_missing: bool) -
         let suggested_start = item.start;
         let original_target = &item.original;
 
-        if processed.get(suggested_start..suggested_start + original_target.len()) == Some(original_target) {
-            processed.replace_range(suggested_start..suggested_start + original_target.len(), &item.replacement);
+        if original_target.is_empty() {
+            if error_on_missing {
+                return Err("Replacement original is empty.".to_string());
+            }
+            continue;
+        }
+
+        let end = match suggested_start.checked_add(original_target.len()) {
+            Some(end) => end,
+            None => {
+                if error_on_missing {
+                    return Err("Replacement range overflow.".to_string());
+                }
+                continue;
+            }
+        };
+
+        if end <= processed.len() && processed.get(suggested_start..end) == Some(original_target) {
+            processed.replace_range(suggested_start..end, &item.replacement);
         } else {
             let mut best_start = None;
             let mut min_distance = usize::MAX;
@@ -26,11 +47,17 @@ pub fn apply_plan_to_text(text: &str, plan: &AnonPlan, error_on_missing: bool) -
 
             match best_start {
                 Some(actual_start) => {
-                    processed.replace_range(actual_start..actual_start + original_target.len(), &item.replacement);
+                    processed.replace_range(
+                        actual_start..actual_start + original_target.len(),
+                        &item.replacement,
+                    );
                 }
                 None => {
                     if error_on_missing {
-                        return Err(format!("Could not find original text '{}' in document.", original_target));
+                        return Err(format!(
+                            "Could not find original text '{}' in document.",
+                            original_target
+                        ));
                     }
                 }
             }

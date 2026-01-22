@@ -13,7 +13,7 @@ export interface OpenedFile {
 export interface FolderFileEntry {
   path: string;
   filename: string;
-  is_dir: boolean;
+  isDir: boolean;
 }
 
 interface FileExplorerProps {
@@ -78,7 +78,7 @@ export function FileExplorer({
   const { roots, children } = buildTree(folderFiles);
 
   // Selection helpers
-  const allFiles = folderFiles.filter(f => !f.is_dir);
+  const allFiles = folderFiles.filter(f => !f.isDir);
   const selectedCount = selectedFiles.size;
   const allSelected = allFiles.length > 0 && selectedFiles.size === allFiles.length;
 
