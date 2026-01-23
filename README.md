@@ -7,9 +7,12 @@ AIが自動で個人情報を検出し、適切な形式に置き換えます。
 ![React](https://img.shields.io/badge/React-19-61DAFB)
 ![License](https://img.shields.io/badge/License-Apache%202.0-green)
 
+> [!CAUTION]
+> このソフトウェアは実験的なものです。実際の患者カルテには適用しないでください。
+
 ---
 
-## 🚀 すぐに試す（初心者向け）
+## 🚀 すぐに試す
 
 ### 1. アプリをダウンロード
 
@@ -22,14 +25,15 @@ AIが自動で個人情報を検出し、適切な形式に置き換えます。
 
 ### 2. APIキーを取得（無料）
 
-このアプリはGoogle Gemini APIを使用しています。無料で取得できます。
+このアプリはGoogle Gemini APIを使用しています。
 
 1. [Google AI Studio](https://aistudio.google.com/apikey) にアクセス
 2. Googleアカウントでログイン
 3. 「Get API key」→「Create API key」をクリック
 4. 表示されたキーをコピー
 
-> 💡 **無料枠について**: Gemini APIは無料枠が十分にあり、通常の利用であれば料金は発生しません。
+> [!TIP]
+> **無料枠について**: Gemini APIは無料枠が十分にあり、通常の利用であれば料金は発生しません。
 
 ### 3. アプリを起動
 
@@ -69,8 +73,8 @@ npm install
 ```bash
 npm run tauri dev
 ```
-
-> ⚠️ 開発モードでは、`src-tauri/.env` に `GOOGLE_API_KEY=your-key` を設定するか、アプリ起動後にUIから設定してください。
+> [!IMPORTANT]
+> 開発モードでは、`src-tauri/.env` に `GOOGLE_API_KEY=your-key` を設定するか、アプリ起動後にUIから設定してください。
 
 ### ビルド
 
@@ -83,9 +87,9 @@ npm run tauri build
 ## 📝 フィードバック
 
 ユーザーテストにご協力いただきありがとうございます！
-ご意見・ご感想は以下のフォームからお寄せください：
+ご意見・ご感想は以下からお寄せください：
 
-👉 [フィードバックフォーム](https://forms.google.com/your-id-here)
+👉 [Anonymed Copilot ユーザーテストのお願い](https://docs.google.com/document/d/1ktWYN8fOEHt7-MPXClU-up4NAHydrsJ4IU26dJP7B70)
 
 ---
 
