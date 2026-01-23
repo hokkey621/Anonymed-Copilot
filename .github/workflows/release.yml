@@ -16,10 +16,13 @@ jobs:
         include:
           - platform: 'macos-latest'
             args: '--target aarch64-apple-darwin'
+            target: 'aarch64-apple-darwin'
           - platform: 'macos-latest'
             args: '--target x86_64-apple-darwin'
+            target: 'x86_64-apple-darwin'
           - platform: 'windows-latest'
             args: ''
+            target: ''
 
     runs-on: ${{ matrix.platform }}
 
@@ -34,21 +37,15 @@ jobs:
           cache: 'npm'
 
       - name: Install Rust stable
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-
-      - name: Install dependencies (macOS)
-        if: matrix.platform == 'macos-latest'
-        run: |
-          rustup target add aarch64-apple-darwin
-          rustup target add x86_64-apple-darwin
+          targets: ${{ matrix.target }}
 
       - name: Install frontend dependencies
         run: npm ci
 
       - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v0.5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Note: API key is NOT embedded. Users will enter their own key on first launch.
