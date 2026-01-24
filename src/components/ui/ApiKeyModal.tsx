@@ -16,7 +16,7 @@ export function ApiKeyModal({ isOpen, onSaved, onClose }: ApiKeyModalProps) {
 
   useEffect(() => {
     if (isOpen) {
-      invoke<string>("get_api_key").then(key => {
+      invoke<string | null>("load_api_key").then(key => {
         if (key) setApiKey(key);
       });
       setStatus("idle");
@@ -33,7 +33,7 @@ export function ApiKeyModal({ isOpen, onSaved, onClose }: ApiKeyModalProps) {
 
     setStatus("validating");
     try {
-      await invoke("save_api_key", { key: apiKey });
+      await invoke("save_api_key", { apiKey: apiKey });
       setStatus("success");
       setTimeout(() => {
         onSaved();

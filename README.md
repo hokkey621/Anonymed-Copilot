@@ -16,7 +16,7 @@ AIが自動で個人情報を検出し、適切な形式に置き換えます。
 
 ### 1. アプリをダウンロード
 
-[GitHub Releases](https://github.com/your-repo/releases) から、お使いのOSに合わせたファイルをダウンロードしてください：
+[GitHub Releases](https://github.com/hokkey621/Anonymed-Copilot/releases) から、お使いのOSに合わせたファイルをダウンロードしてください：
 
 | OS | ファイル |
 |----|----------|
