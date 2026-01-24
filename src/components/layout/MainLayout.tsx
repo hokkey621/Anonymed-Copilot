@@ -743,6 +743,7 @@ export function MainLayout() {
         onClose={() => setShowApiKeyModal(false)}
         onSaved={() => {
           setHasApiKey(true);
+          setShowApiKeyModal(false);
           console.log("API key saved");
         }}
       />
