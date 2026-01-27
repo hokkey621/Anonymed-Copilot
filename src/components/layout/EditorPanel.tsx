@@ -33,9 +33,14 @@ export function EditorPanel({ original = "", modified = "", onModifiedChange, ac
 
   // Refs for Monaco editor instances and decorations
   const diffEditorRef = useRef<monaco.editor.IStandaloneDiffEditor | null>(null);
+  const originalEditorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const modifiedEditorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const decorationIdsRef = useRef<string[]>([]);
+  const originalDecorationIdsRef = useRef<string[]>([]);
   const widgetsRef = useRef<Map<number, monaco.editor.IContentWidget>>(new Map());
+  const deletedViewZonesRef = useRef<Map<number, HTMLElement>>(new Map());
+  const approvedBlockIdsRef = useRef<Set<number>>(new Set());
+  const focusModeEnabledRef = useRef(focusModeEnabled);
 
   // Completion celebration state
   const [showCompletionCelebration, setShowCompletionCelebration] = useState(false);
@@ -90,6 +95,16 @@ export function EditorPanel({ original = "", modified = "", onModifiedChange, ac
     }
   }, [diffBlocks, approvedBlockIds]);
 
+  const applyDeletedViewZoneStyles = useCallback(() => {
+    const approvedIds = approvedBlockIdsRef.current;
+    const focusEnabled = focusModeEnabledRef.current;
+    deletedViewZonesRef.current.forEach((node, blockId) => {
+      const shouldDim = focusEnabled && approvedIds.has(blockId);
+      node.classList.toggle("approved-line-dimmed", shouldDim);
+      node.classList.toggle("approved-text-dimmed", shouldDim);
+    });
+  }, []);
+
   // Handle block approval toggle with animations
   const handleToggleApproveBlock = useCallback((blockId: number, event?: MouseEvent) => {
     setApprovedBlockIds(prev => {
@@ -135,6 +150,16 @@ export function EditorPanel({ original = "", modified = "", onModifiedChange, ac
     });
   }, [triggerApprovalAnimation]);
 
+  useEffect(() => {
+    approvedBlockIdsRef.current = approvedBlockIds;
+    applyDeletedViewZoneStyles();
+  }, [approvedBlockIds, applyDeletedViewZoneStyles]);
+
+  useEffect(() => {
+    focusModeEnabledRef.current = focusModeEnabled;
+    applyDeletedViewZoneStyles();
+  }, [focusModeEnabled, applyDeletedViewZoneStyles]);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -169,57 +194,115 @@ export function EditorPanel({ original = "", modified = "", onModifiedChange, ac
 
   // Apply decorations to dim approved blocks
   useEffect(() => {
-    if (!modifiedEditorRef.current || !focusModeEnabled) return;
+    if (!focusModeEnabled) return;
+
+    const modifiedEditor = modifiedEditorRef.current;
+    const originalEditor = originalEditorRef.current;
+    if (!modifiedEditor && !originalEditor) return;
+
+    const isValidRange = (startLine: number, endLine: number) => startLine > 0 && endLine > 0;
 
     // Build decorations for approved blocks (dim them)
-    const newDecorations: monaco.editor.IModelDeltaDecoration[] = [];
+    const modifiedDecorations: monaco.editor.IModelDeltaDecoration[] = [];
+    const originalDecorations: monaco.editor.IModelDeltaDecoration[] = [];
 
     diffBlocks.forEach(block => {
       if (approvedBlockIds.has(block.id)) {
         // Approved blocks get dimmed
-        newDecorations.push({
-          range: new monaco.Range(block.startLine, 1, block.endLine, 1),
-          options: {
-            isWholeLine: true,
-            className: "approved-line-dimmed",
-            inlineClassName: "approved-text-dimmed",
-          },
-        });
+        if (isValidRange(block.startLine, block.endLine)) {
+          modifiedDecorations.push({
+            range: new monaco.Range(block.startLine, 1, block.endLine, 1),
+            options: {
+              isWholeLine: true,
+              className: "approved-line-dimmed",
+              inlineClassName: "approved-text-dimmed",
+            },
+          });
+        }
+        if (isValidRange(block.originalStartLine, block.originalEndLine)) {
+          originalDecorations.push({
+            range: new monaco.Range(block.originalStartLine, 1, block.originalEndLine, 1),
+            options: {
+              isWholeLine: true,
+              className: "approved-line-dimmed",
+              inlineClassName: "approved-text-dimmed",
+            },
+          });
+        }
       }
     });
 
     // N+1 step: dim ALL diff blocks to focus on non-highlighted areas
     if (isNPlusOneStep) {
       // Clear previous decorations and apply to all blocks
-      const allBlockDecorations: monaco.editor.IModelDeltaDecoration[] = diffBlocks.map(block => ({
-        range: new monaco.Range(block.startLine, 1, block.endLine, 1),
-        options: {
-          isWholeLine: true,
-          className: "approved-line-dimmed",
-          inlineClassName: "approved-text-dimmed",
-        },
-      }));
-      decorationIdsRef.current = modifiedEditorRef.current.deltaDecorations(
-        decorationIdsRef.current,
-        allBlockDecorations
-      );
+      const allModifiedDecorations: monaco.editor.IModelDeltaDecoration[] = diffBlocks
+        .filter(block => isValidRange(block.startLine, block.endLine))
+        .map(block => ({
+          range: new monaco.Range(block.startLine, 1, block.endLine, 1),
+          options: {
+            isWholeLine: true,
+            className: "approved-line-dimmed",
+            inlineClassName: "approved-text-dimmed",
+          },
+        }));
+      const allOriginalDecorations: monaco.editor.IModelDeltaDecoration[] = diffBlocks
+        .filter(block => isValidRange(block.originalStartLine, block.originalEndLine))
+        .map(block => ({
+          range: new monaco.Range(block.originalStartLine, 1, block.originalEndLine, 1),
+          options: {
+            isWholeLine: true,
+            className: "approved-line-dimmed",
+            inlineClassName: "approved-text-dimmed",
+          },
+        }));
+      if (modifiedEditor) {
+        decorationIdsRef.current = modifiedEditor.deltaDecorations(
+          decorationIdsRef.current,
+          allModifiedDecorations
+        );
+      }
+      if (originalEditor) {
+        originalDecorationIdsRef.current = originalEditor.deltaDecorations(
+          originalDecorationIdsRef.current,
+          allOriginalDecorations
+        );
+      }
     } else {
-      decorationIdsRef.current = modifiedEditorRef.current.deltaDecorations(
-        decorationIdsRef.current,
-        newDecorations
-      );
+      if (modifiedEditor) {
+        decorationIdsRef.current = modifiedEditor.deltaDecorations(
+          decorationIdsRef.current,
+          modifiedDecorations
+        );
+      }
+      if (originalEditor) {
+        originalDecorationIdsRef.current = originalEditor.deltaDecorations(
+          originalDecorationIdsRef.current,
+          originalDecorations
+        );
+      }
     }
   }, [approvedBlockIds, diffBlocks, focusModeEnabled, isNPlusOneStep]);
 
   // Clear decorations when Focus Mode is disabled
   useEffect(() => {
-    if (!modifiedEditorRef.current) return;
+    if (!modifiedEditorRef.current && !originalEditorRef.current) return;
 
     if (!focusModeEnabled) {
-      decorationIdsRef.current = modifiedEditorRef.current.deltaDecorations(
-        decorationIdsRef.current,
-        []
-      );
+      if (modifiedEditorRef.current) {
+        decorationIdsRef.current = modifiedEditorRef.current.deltaDecorations(
+          decorationIdsRef.current,
+          []
+        );
+      }
+      if (originalEditorRef.current) {
+        originalDecorationIdsRef.current = originalEditorRef.current.deltaDecorations(
+          originalDecorationIdsRef.current,
+          []
+        );
+      }
+      deletedViewZonesRef.current.forEach((node) => {
+        node.classList.remove("approved-line-dimmed", "approved-text-dimmed");
+      });
     }
   }, [focusModeEnabled]);
 
@@ -257,6 +340,13 @@ export function EditorPanel({ original = "", modified = "", onModifiedChange, ac
         []
       );
     }
+    if (originalEditorRef.current && originalDecorationIdsRef.current.length > 0) {
+      originalDecorationIdsRef.current = originalEditorRef.current.deltaDecorations(
+        originalDecorationIdsRef.current,
+        []
+      );
+    }
+    deletedViewZonesRef.current.clear();
   }, [original, modified]);
 
   const handleEditorDidMount = (editor: monaco.editor.IStandaloneDiffEditor) => {
@@ -264,6 +354,7 @@ export function EditorPanel({ original = "", modified = "", onModifiedChange, ac
 
       // Hide line numbers on the original (left) editor
       const originalEditor = editor.getOriginalEditor();
+      originalEditorRef.current = originalEditor;
       originalEditor.updateOptions({ lineNumbers: 'off' });
 
       const modifiedEditor = editor.getModifiedEditor();
@@ -292,6 +383,25 @@ export function EditorPanel({ original = "", modified = "", onModifiedChange, ac
           widgetsRef.current.set(block.id, widget);
           modifiedEditor.addContentWidget(widget);
         });
+
+        const editorDomNode = modifiedEditor.getDomNode();
+        if (editorDomNode) {
+          requestAnimationFrame(() => {
+            const deletedZoneNodes = Array.from(
+              editorDomNode.querySelectorAll<HTMLElement>(".view-zones .line-delete")
+            );
+            const deletionBlocks = blocks.filter(block => block.hasOriginal);
+            deletedViewZonesRef.current.clear();
+            const count = Math.min(deletedZoneNodes.length, deletionBlocks.length);
+            for (let i = 0; i < count; i += 1) {
+              const node = deletedZoneNodes[i];
+              const blockId = deletionBlocks[i].id;
+              node.dataset.blockId = String(blockId);
+              deletedViewZonesRef.current.set(blockId, node);
+            }
+            applyDeletedViewZoneStyles();
+          });
+        }
       });
   };
 

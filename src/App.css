@@ -57,12 +57,12 @@
 
 /* Focus Mode: Dimmed text for approved blocks */
 .approved-text-dimmed {
-  opacity: 0.25 !important;
-  color: #999 !important;
+  opacity: 0.12 !important;
+  color: #777 !important;
 }
 
 .approved-line-dimmed {
-  background-color: rgba(200, 200, 200, 0.2) !important;
+  background-color: rgba(200, 200, 200, 0.16) !important;
 }
 
 /* Approve button in diff viewer - GREEN */
