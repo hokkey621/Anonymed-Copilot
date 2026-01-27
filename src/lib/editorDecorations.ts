@@ -10,6 +10,10 @@ export interface DiffBlock {
   id: number;
   startLine: number;
   endLine: number;
+  originalStartLine: number;
+  originalEndLine: number;
+  hasOriginal: boolean;
+  hasModified: boolean;
   isApproved: boolean;
 }
 
@@ -92,12 +96,20 @@ export function getDiffBlocks(
   const lineChanges = diffEditor.getLineChanges();
   if (!lineChanges) return [];
 
-  return lineChanges.map((change, index) => ({
-    id: index,
-    startLine: change.modifiedStartLineNumber,
-    endLine: change.modifiedEndLineNumber || change.modifiedStartLineNumber,
-    isApproved: false,
-  }));
+  return lineChanges.map((change, index) => {
+    const hasOriginal = change.originalEndLineNumber !== 0;
+    const hasModified = change.modifiedEndLineNumber !== 0;
+    return {
+      id: index,
+      startLine: change.modifiedStartLineNumber,
+      endLine: change.modifiedEndLineNumber || change.modifiedStartLineNumber,
+      originalStartLine: hasOriginal ? change.originalStartLineNumber : 0,
+      originalEndLine: hasOriginal ? change.originalEndLineNumber : 0,
+      hasOriginal,
+      hasModified,
+      isApproved: false,
+    };
+  });
 }
 
 /**
