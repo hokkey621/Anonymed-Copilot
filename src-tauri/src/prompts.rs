@@ -5,59 +5,70 @@ use crate::domain::model::WorkflowStep;
 /// This module centralizes all prompts, text resources, and keywords for easier prompt engineering.
 
 /// Base system prompt for the medical data anonymization agent
-pub const AGENT_BASE_PROMPT: &str = r#"あなたは「Anonymed Copilot」という名前の医療データ匿名化の専門エージェントです。
-
-## あなたの役割
-- 医療データの匿名化に関する質問に答える
-- ユーザーが匿名化プランを立てるのを支援する
-- 3省2ガイドラインに基づいた匿名化アドバイスを提供する
-
-## 重要: ユーザーの短い指示への対応と目的の確認
-ユーザーが「匿名化を実行して」「実行」などの短い指示を出した場合、**まずは匿名化の利用目的（ワクチン開発、教材作成、症例報告など）を尋ねてください**。目的によって最適な匿名化ルールが異なるためです。
-ただし、ユーザーが「標準で」「そのままで」と答えた場合や、既に目的が文脈から明らかな場合は、即座にプランを作成してください。
-
-## 回答のルール
-- 回答は2-3文以内で簡潔に
-- 専門用語は避け、分かりやすい日本語を使用
-- 必要に応じて具体例を示す
-
-## 禁止事項
-- [THOUGHT]や[thinking]などのメタタグを出力しない
-- 内部的な思考過程を出力に含めない
-- 長文の説明は避ける
-
-## 重要: ファイルが開かれていない場合
-ユーザーがまだファイルを開いていない場合でも、一般的な質問（使い方、匿名化の仕組みなど）には回答してください。「ファイルをアップロードしてください」と繰り返さないでください。"#;
+pub const AGENT_BASE_PROMPT: &str = include_str!("../prompts/agent_base_prompt.md");
+const BULK_EXECUTION_SUFFIX: &str = include_str!("../prompts/bulk_execution_suffix.md");
+const EDITOR_CONTEXT_SUFFIX: &str = include_str!("../prompts/editor_context_suffix.md");
+const STRATEGY_PLANNER_PROMPT: &str = include_str!("../prompts/strategy_planner_system_prompt.md");
+const STRATEGY_EXECUTOR_PROMPT: &str =
+    include_str!("../prompts/strategy_executor_system_prompt.md");
+const STRATEGY_EXECUTOR_LOCAL_FAST_PROMPT: &str =
+    include_str!("../prompts/strategy_executor_local_fast_system_prompt.md");
 
 /// System prompt for bulk execution mode
 pub fn bulk_execution_prompt(file_count: usize) -> String {
-    format!(
-        r#"{}
-
-## 現在のコンテキスト
-ユーザーは{}件のファイルの一括匿名化処理を希望しています。
-
-## 追加の回答ルール
-- ファイル数と推定処理時間を伝える
-- 「anonymized_outputs」フォルダに出力することを説明する
-- 元データは変更しないことを明確にする"#,
-        AGENT_BASE_PROMPT, file_count
-    )
+    let suffix = BULK_EXECUTION_SUFFIX.replace("{{file_count}}", &file_count.to_string());
+    format!("{}\n\n{}", AGENT_BASE_PROMPT.trim(), suffix.trim())
 }
 
 /// System prompt when editor content is available
 pub fn with_editor_context(base_prompt: &str, content: &str) -> String {
-    format!(
-        r#"{}
+    let max_chars = 4000usize;
+    let content_chars = content.chars().count();
+    let clipped = if content_chars > max_chars {
+        let excerpt = content.chars().take(max_chars).collect::<String>();
+        format!(
+            "{}\n\n(省略: 全{}文字のうち先頭{}文字を表示)",
+            excerpt, content_chars, max_chars
+        )
+    } else {
+        content.to_string()
+    };
 
-## 現在エディタに表示されているテキスト
-```
-{}
-```
+    let suffix = EDITOR_CONTEXT_SUFFIX.replace("{{editor_content}}", clipped.as_str());
+    format!("{}\n\n{}", base_prompt.trim(), suffix.trim())
+}
 
-上記のテキストに含まれる個人情報を簡潔に特定し、推奨される匿名化方法を提案してください。"#,
-        base_prompt, content
-    )
+/// Planner prompt for anonymization strategy generation
+pub fn strategy_planner_prompt() -> &'static str {
+    STRATEGY_PLANNER_PROMPT
+}
+
+/// Executor prompt for anonymization replacement extraction
+pub fn strategy_executor_prompt(
+    task_context: &str,
+    date_handling: &str,
+    name_handling: &str,
+    specific_instructions: &str,
+) -> String {
+    STRATEGY_EXECUTOR_PROMPT
+        .replace("{{task_context}}", task_context)
+        .replace("{{date_handling}}", date_handling)
+        .replace("{{name_handling}}", name_handling)
+        .replace("{{specific_instructions}}", specific_instructions)
+}
+
+/// Executor prompt specialized for local Gemma fast mode
+pub fn strategy_executor_local_fast_prompt(
+    task_context: &str,
+    date_handling: &str,
+    name_handling: &str,
+    specific_instructions: &str,
+) -> String {
+    STRATEGY_EXECUTOR_LOCAL_FAST_PROMPT
+        .replace("{{task_context}}", task_context)
+        .replace("{{date_handling}}", date_handling)
+        .replace("{{name_handling}}", name_handling)
+        .replace("{{specific_instructions}}", specific_instructions)
 }
 
 /// Default anonymization policy summary
