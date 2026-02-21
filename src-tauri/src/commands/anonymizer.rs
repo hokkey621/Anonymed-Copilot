@@ -189,10 +189,27 @@ pub async fn agent_chat(
         base_prompt
     };
 
-    // Create history (no need to manually inject system prompt anymore)
+    // Find matching skills based on user's last message
+    let last_user_message = messages
+        .iter()
+        .rev()
+        .find(|m| m.role == "user")
+        .map(|m| m.content.as_str())
+        .unwrap_or("");
+    let matching_skills = find_matching_skills(last_user_message);
+    let skill_names = get_skill_names(&matching_skills);
+
+    // Inject skill context into prompt if any matched
+    let final_prompt = if !matching_skills.is_empty() {
+        build_prompt_with_skills(&system_context, &matching_skills)
+    } else {
+        system_context
+    };
+
+    // Create history
     let history = to_history(&messages);
 
-    let ai_response = handler.chat(history, Some(system_context.as_str())).await?;
+    let ai_response = handler.chat(history, Some(final_prompt.as_str())).await?;
 
     // Check if user has expressed anonymization purpose
     let has_purpose = detect_purpose_intent(&messages);
@@ -229,7 +246,7 @@ pub async fn agent_chat(
         bulk_plan,
         workflow_steps,
         suggestions,
-        applied_skills: vec![],
+        applied_skills: skill_names,
     })
 }
 
