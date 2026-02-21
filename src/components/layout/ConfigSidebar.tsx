@@ -45,6 +45,7 @@ interface AgentChatResponse {
   bulkPlan: BulkExecutionPlan | null;
   workflowSteps: WorkflowStep[] | null;
   suggestions: string[] | null;
+  appliedSkills?: string[] | null;
 }
 
 interface ConfigSidebarProps {
@@ -199,8 +200,6 @@ export function ConfigSidebar({
   const shouldRunAnonymizationDirectly = (text: string): boolean => {
     const normalized = text.replace(/\s+/g, "");
     return (
-      normalized.includes("匿名化を実行して") ||
-      normalized === "匿名化して" ||
       normalized === "実行" ||
       normalized === "匿名化実行"
     );
@@ -337,6 +336,7 @@ export function ConfigSidebar({
         setActiveBulkPlan(response.bulkPlan);
         setWorkflowSteps(response.workflowSteps);
       }
+      setActiveSkills(response.appliedSkills ?? []);
 
       // Auto-detect task context
       const lowerInput = inputInfo.toLowerCase();
@@ -489,6 +489,7 @@ export function ConfigSidebar({
                     setActiveBulkPlan(response.bulkPlan);
                     setWorkflowSteps(response.workflowSteps);
                   }
+                  setActiveSkills(response.appliedSkills ?? []);
                 } catch (e) {
                   console.error("Chat error:", e);
                   setMessages(prev => [...prev, { role: "assistant", content: `エラー: ${formatCommandError(e)}` }]);
