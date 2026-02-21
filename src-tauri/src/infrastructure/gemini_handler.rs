@@ -4,6 +4,7 @@ use std::env;
 use std::time::Duration;
 
 use crate::domain::model::ReplacementEntry;
+use crate::infrastructure::llm::LlmMessage;
 
 #[derive(Deserialize)]
 struct GeminiResponse {
@@ -11,36 +12,36 @@ struct GeminiResponse {
 }
 
 #[derive(Serialize)]
-pub struct GeminiRequest {
-    pub contents: Vec<Content>,
-    pub system_instruction: Option<SystemInstruction>,
+struct GeminiRequest {
+    contents: Vec<Content>,
+    system_instruction: Option<SystemInstruction>,
     #[serde(rename = "generationConfig")]
-    pub generation_config: GenerationConfig,
+    generation_config: GenerationConfig,
 }
 
 #[derive(Serialize)]
-pub struct SystemInstruction {
+struct SystemInstruction {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub role: Option<String>,
-    pub parts: Vec<Part>,
+    role: Option<String>,
+    parts: Vec<Part>,
 }
 
 #[derive(Serialize)]
-pub struct Content {
-    pub role: String,
-    pub parts: Vec<Part>,
+struct Content {
+    role: String,
+    parts: Vec<Part>,
 }
 
 #[derive(Serialize)]
-pub struct Part {
-    pub text: String,
+struct Part {
+    text: String,
 }
 
 #[derive(Serialize)]
-pub struct GenerationConfig {
-    pub temperature: f32,
+struct GenerationConfig {
+    temperature: f32,
     #[serde(rename = "responseMimeType")]
-    pub response_mime_type: String,
+    response_mime_type: String,
 }
 
 #[allow(dead_code)]
@@ -124,7 +125,7 @@ impl GeminiHandler {
     /// Create a new handler, trying settings first, then falling back to .env
     pub fn new() -> Result<Self, String> {
         let api_key = env::var("GOOGLE_API_KEY").map_err(|_| {
-            "GOOGLE_API_KEY not set. Please configure your API key in the app settings.".to_string()
+            "GEMINI_API_KEY_MISSING: GOOGLE_API_KEY が設定されていません。Gemini を利用するには API キーを設定してください。".to_string()
         })?;
         Ok(Self {
             client: Self::build_client()?,
@@ -154,6 +155,22 @@ impl GeminiHandler {
 
         // Fallback to environment variable
         Self::new()
+    }
+
+    fn to_contents(history: Vec<LlmMessage>) -> Vec<Content> {
+        history
+            .into_iter()
+            .map(|m| {
+                let role = match m.role.as_str() {
+                    "assistant" | "model" => "model".to_string(),
+                    _ => "user".to_string(),
+                };
+                Content {
+                    role,
+                    parts: vec![Part { text: m.content }],
+                }
+            })
+            .collect()
     }
 
     async fn send_with_retry(
@@ -335,11 +352,11 @@ impl GeminiHandler {
     /// Accepts optional system_instruction for proper system prompting
     pub async fn chat(
         &self,
-        history: Vec<Content>,
+        history: Vec<LlmMessage>,
         system_prompt: Option<&str>,
     ) -> Result<String, String> {
         let request_body = GeminiRequest {
-            contents: history,
+            contents: Self::to_contents(history),
             system_instruction: system_prompt.map(|s| SystemInstruction {
                 role: None,
                 parts: vec![Part {
@@ -367,7 +384,7 @@ impl GeminiHandler {
     /// Accepts optional system_instruction for proper system prompting
     pub async fn chat_streaming(
         &self,
-        history: Vec<Content>,
+        history: Vec<LlmMessage>,
         system_prompt: Option<&str>,
         app: &tauri::AppHandle,
     ) -> Result<String, String> {
@@ -387,7 +404,7 @@ impl GeminiHandler {
         );
 
         let request_body = GeminiRequest {
-            contents: history,
+            contents: Self::to_contents(history),
             system_instruction: system_prompt.map(|s| SystemInstruction {
                 role: None,
                 parts: vec![Part {

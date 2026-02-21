@@ -1,6 +1,6 @@
 use crate::domain::model::{AnonPlan, ReplacementEntry};
 use crate::domain::skills::{build_prompt_with_skills, find_matching_skills, get_skill_names};
-use crate::infrastructure::gemini_handler::GeminiHandler;
+use crate::infrastructure::llm::{LlmClient, ModelProvider};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tauri::{AppHandle, Emitter};
@@ -12,7 +12,7 @@ pub struct AgentProgressEvent {
     pub message: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct AnonymizationStrategy {
     pub task_context: String,
     pub focus_areas: Vec<String>,
@@ -26,6 +26,19 @@ struct ExecutorOutput {
     replacements: Vec<ReplacementEntry>,
 }
 
+#[derive(Deserialize)]
+struct LocalFastReplacementEntry {
+    original: String,
+    replacement: String,
+    #[serde(default)]
+    category: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct LocalFastExecutorOutput {
+    replacements: Vec<LocalFastReplacementEntry>,
+}
+
 #[allow(dead_code)]
 #[derive(Deserialize)]
 struct ReviewerOutput {
@@ -35,13 +48,47 @@ struct ReviewerOutput {
 }
 
 pub struct AgentOrchestrator {
-    handler: GeminiHandler,
+    handler: LlmClient,
 }
 
 impl AgentOrchestrator {
-    pub fn new(app: &tauri::AppHandle) -> Result<Self, String> {
-        let handler = GeminiHandler::from_app(app)?;
+    pub fn new(app: &tauri::AppHandle, provider: ModelProvider) -> Result<Self, String> {
+        let handler = LlmClient::from_app(app, provider)?;
         Ok(Self { handler })
+    }
+
+    fn local_fast_strategy(task_name: &str) -> AnonymizationStrategy {
+        AnonymizationStrategy {
+            task_context: if task_name.trim().is_empty() {
+                "Medical Case Study".to_string()
+            } else {
+                task_name.to_string()
+            },
+            focus_areas: vec![
+                "Patient Names".to_string(),
+                "Dates".to_string(),
+                "Identifiers".to_string(),
+            ],
+            date_handling: "relative".to_string(),
+            name_handling: "replace_tag".to_string(),
+            specific_instructions:
+                "Preserve medical meaning while anonymizing personal information.".to_string(),
+        }
+    }
+
+    pub fn is_local_gemma(&self) -> bool {
+        self.handler.provider() == ModelProvider::LocalGemma
+    }
+
+    pub async fn plan_strategy_without_text(
+        &self,
+        task_name: &str,
+        matching_skills: &[&crate::domain::skills::LoadedSkill],
+    ) -> Result<AnonymizationStrategy, String> {
+        if self.is_local_gemma() {
+            return Ok(Self::local_fast_strategy(task_name));
+        }
+        self.plan_strategy(task_name, "", matching_skills).await
     }
 
     /// Step 1: Planner Agent
@@ -53,24 +100,7 @@ impl AgentOrchestrator {
         text_preview: &str,
         matching_skills: &[&crate::domain::skills::LoadedSkill],
     ) -> Result<AnonymizationStrategy, String> {
-        let base_prompt = r#"
-        You are a Senior Privacy Architect. Your job is to design an Anonymization Strategy.
-        Analyze the task name and the provided text preview.
-        Determine:
-        1. Context of the document (Medical, Legal, Educational, etc.)
-        2. Strictness level.
-        3. How to handle Dates (relative days vs masking).
-        4. How to handle Names (pseudonyms vs tags).
-
-        Return JSON matching this structure:
-        {
-            "task_context": "Refined context name",
-            "focus_areas": ["Patient Names", "Hospital IDs", ...],
-            "date_handling": "relative" | "mask" | "keep",
-            "name_handling": "pseudonym" | "replace_tag" | "keep",
-            "specific_instructions": "Additional custom rules..."
-        }
-        "#;
+        let base_prompt = crate::prompts::strategy_planner_prompt();
 
         // Inject skill-based domain knowledge into the prompt
         let system_prompt = build_prompt_with_skills(base_prompt, matching_skills);
@@ -92,31 +122,47 @@ impl AgentOrchestrator {
         strategy: &AnonymizationStrategy,
         full_text: &str,
     ) -> Result<Vec<ReplacementEntry>, String> {
-        let system_prompt = format!(
-            r#"
-            You are an Expert Anonymization Executor.
-            Follow this STRATEGY strictly:
-            Context: {}
-            Date Handling: {}
-            Name Handling: {}
-            Instructions: {}
+        if self.is_local_gemma() {
+            let system_prompt = crate::prompts::strategy_executor_local_fast_prompt(
+                strategy.task_context.as_str(),
+                strategy.date_handling.as_str(),
+                strategy.name_handling.as_str(),
+                strategy.specific_instructions.as_str(),
+            );
 
-            Task: Identify ALL strings that need replacement in the text.
-            Return a JSON object with a 'replacements' array.
-            Each replacement must have:
-            - original: exact matching substring
-            - replacement: the new string
-            - start: start index (optional hint)
-            - end: end index (optional hint)
-            - reason: brief explanation
-            - category: PER, LOC, DATE, ID, etc.
+            let output = self
+                .handler
+                .generate_structure::<LocalFastExecutorOutput>(
+                    "Extract PHI replacements for anonymization.",
+                    &system_prompt,
+                    Some(full_text),
+                )
+                .await?;
 
-            Output format: {{ "replacements": [...] }}
-            "#,
-            strategy.task_context,
-            strategy.date_handling,
-            strategy.name_handling,
-            strategy.specific_instructions
+            let mut dedupe = std::collections::HashSet::<(String, String)>::new();
+            let mapped = output
+                .replacements
+                .into_iter()
+                .filter(|r| !r.original.trim().is_empty() && !r.replacement.trim().is_empty())
+                .filter(|r| dedupe.insert((r.original.clone(), r.replacement.clone())))
+                .map(|r| ReplacementEntry {
+                    original: r.original,
+                    replacement: r.replacement,
+                    start: 0,
+                    end: 0,
+                    reason: "PII".to_string(),
+                    category: r.category,
+                })
+                .collect::<Vec<_>>();
+
+            return Ok(mapped);
+        }
+
+        let system_prompt = crate::prompts::strategy_executor_prompt(
+            strategy.task_context.as_str(),
+            strategy.date_handling.as_str(),
+            strategy.name_handling.as_str(),
+            strategy.specific_instructions.as_str(),
         );
 
         let output = self
@@ -159,47 +205,62 @@ impl AgentOrchestrator {
             );
         }
 
+        let use_local_fast_path = self.is_local_gemma();
+
         // 1. Plan (with skill context)
-        let _ = app.emit(
-            "agent-progress",
-            AgentProgressEvent {
-                step: "Planner".to_string(),
-                status: "In Progress".to_string(),
-                message: "Analyzing context and designing strategy...".to_string(),
-            },
-        );
+        let strategy = if use_local_fast_path {
+            let _ = app.emit(
+                "agent-progress",
+                AgentProgressEvent {
+                    step: "Planner".to_string(),
+                    status: "Completed".to_string(),
+                    message: "Local Gemma fast mode: planner step skipped".to_string(),
+                },
+            );
 
-        let preview = text.chars().take(1000).collect::<String>();
-        let strategy = self
-            .plan_strategy(user_task_input, &preview, &matching_skills)
-            .await;
+            Self::local_fast_strategy(user_task_input)
+        } else {
+            let _ = app.emit(
+                "agent-progress",
+                AgentProgressEvent {
+                    step: "Planner".to_string(),
+                    status: "In Progress".to_string(),
+                    message: "Analyzing context and designing strategy...".to_string(),
+                },
+            );
 
-        let strategy = match strategy {
-            Ok(s) => {
-                let _ = app.emit(
-                    "agent-progress",
-                    AgentProgressEvent {
-                        step: "Planner".to_string(),
-                        status: "Completed".to_string(),
-                        message: format!(
-                            "Strategy defined: {} ({})",
-                            s.task_context,
-                            s.focus_areas.len()
-                        ),
-                    },
-                );
-                s
-            }
-            Err(e) => {
-                let _ = app.emit(
-                    "agent-progress",
-                    AgentProgressEvent {
-                        step: "Planner".to_string(),
-                        status: "Failed".to_string(),
-                        message: format!("Planning failed: {}", e),
-                    },
-                );
-                return Err(e);
+            let preview = text.chars().take(1000).collect::<String>();
+            let strategy = self
+                .plan_strategy(user_task_input, &preview, &matching_skills)
+                .await;
+
+            match strategy {
+                Ok(s) => {
+                    let _ = app.emit(
+                        "agent-progress",
+                        AgentProgressEvent {
+                            step: "Planner".to_string(),
+                            status: "Completed".to_string(),
+                            message: format!(
+                                "Strategy defined: {} ({})",
+                                s.task_context,
+                                s.focus_areas.len()
+                            ),
+                        },
+                    );
+                    s
+                }
+                Err(e) => {
+                    let _ = app.emit(
+                        "agent-progress",
+                        AgentProgressEvent {
+                            step: "Planner".to_string(),
+                            status: "Failed".to_string(),
+                            message: format!("Planning failed: {}", e),
+                        },
+                    );
+                    return Err(e);
+                }
             }
         };
 

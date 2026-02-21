@@ -20,6 +20,7 @@ pub fn run() {
             commands::audit::create_audit_report,
             commands::audit::generate_public_notice,
             commands::batch::process_bulk,
+            commands::batch::bulk_analyze_files,
             commands::batch::bulk_execute,
             commands::batch::bulk_dry_run,
             commands::batch::bulk_preview,
@@ -30,8 +31,11 @@ pub fn run() {
             commands::file::read_file_content,
             commands::file::save_anonymized_file,
             commands::settings::save_api_key,
+            commands::settings::save_selected_provider,
+            commands::settings::load_app_settings,
             commands::settings::load_api_key,
-            commands::settings::has_api_key
+            commands::settings::has_api_key,
+            commands::settings::has_api_key_for_provider
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

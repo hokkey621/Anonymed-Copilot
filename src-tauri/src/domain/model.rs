@@ -19,6 +19,7 @@ pub struct ReplacementEntry {
     pub start: usize,
     #[serde(default)]
     pub end: usize,
+    #[serde(default)]
     pub reason: String,
     pub category: Option<String>,
 }

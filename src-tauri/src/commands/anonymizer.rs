@@ -1,7 +1,7 @@
 use crate::domain::agent_orchestrator::AgentOrchestrator;
 use crate::domain::model::AnonPlan;
 use crate::domain::skills::{build_prompt_with_skills, find_matching_skills, get_skill_names};
-use crate::infrastructure::gemini_handler::GeminiHandler;
+use crate::infrastructure::llm::{LlmClient, LlmMessage, ModelProvider};
 use crate::utils::plan_apply::apply_plan_to_text;
 use zeroize::Zeroize;
 
@@ -11,8 +11,9 @@ pub async fn analyze_text(
     app: tauri::AppHandle,
     text: String,
     task_context: String,
+    provider: Option<ModelProvider>,
 ) -> Result<AnonPlan, String> {
-    let orchestrator = AgentOrchestrator::new(&app)?;
+    let orchestrator = AgentOrchestrator::new(&app, provider.unwrap_or_default())?;
     // The user's input "task_context" here is effectively the prompt for the Planner (e.g. "Vaccine Study")
     let plan = orchestrator
         .run_anonymization_pipeline(&app, &text, &task_context)
@@ -36,27 +37,25 @@ pub struct ChatMessage {
     content: String,
 }
 
-use crate::infrastructure::gemini_handler::{Content, Part};
+fn to_history(messages: &[ChatMessage]) -> Vec<LlmMessage> {
+    messages
+        .iter()
+        .map(|m| LlmMessage {
+            role: m.role.clone(),
+            content: m.content.clone(),
+        })
+        .collect()
+}
 
 /// Conversational chat with AI (supports history)
 #[tauri::command]
 pub async fn chat_with_ai(
     app: tauri::AppHandle,
     messages: Vec<ChatMessage>,
+    provider: Option<ModelProvider>,
 ) -> Result<String, String> {
-    let handler = GeminiHandler::from_app(&app)?;
-
-    let history: Vec<Content> = messages
-        .into_iter()
-        .map(|m| Content {
-            role: if m.role == "assistant" {
-                "model".to_string()
-            } else {
-                "user".to_string()
-            },
-            parts: vec![Part { text: m.content }],
-        })
-        .collect();
+    let handler = LlmClient::from_app(&app, provider.unwrap_or_default())?;
+    let history = to_history(&messages);
 
     handler.chat(history, None).await
 }
@@ -169,8 +168,9 @@ pub async fn agent_chat(
     messages: Vec<ChatMessage>,
     file_count: usize,
     editor_content: Option<String>,
+    provider: Option<ModelProvider>,
 ) -> Result<AgentChatResponse, String> {
-    let handler = GeminiHandler::from_app(&app)?;
+    let handler = LlmClient::from_app(&app, provider.unwrap_or_default())?;
 
     let is_bulk_request = detect_bulk_intent(&messages);
 
@@ -190,19 +190,7 @@ pub async fn agent_chat(
     };
 
     // Create history (no need to manually inject system prompt anymore)
-    let history: Vec<Content> = messages
-        .iter()
-        .map(|m| Content {
-            role: if m.role == "assistant" {
-                "model".to_string()
-            } else {
-                "user".to_string()
-            },
-            parts: vec![Part {
-                text: m.content.clone(),
-            }],
-        })
-        .collect();
+    let history = to_history(&messages);
 
     let ai_response = handler.chat(history, Some(system_context.as_str())).await?;
 
@@ -252,8 +240,9 @@ pub async fn agent_chat_streaming(
     messages: Vec<ChatMessage>,
     file_count: usize,
     editor_content: Option<String>,
+    provider: Option<ModelProvider>,
 ) -> Result<AgentChatResponse, String> {
-    let handler = GeminiHandler::from_app(&app)?;
+    let handler = LlmClient::from_app(&app, provider.unwrap_or_default())?;
 
     let is_bulk_request = detect_bulk_intent(&messages);
     // let has_purpose = detect_purpose_intent(&messages); // Moved to later check
@@ -291,19 +280,7 @@ pub async fn agent_chat_streaming(
     };
 
     // Create history
-    let history: Vec<Content> = messages
-        .iter()
-        .map(|m| Content {
-            role: if m.role == "assistant" {
-                "model".to_string()
-            } else {
-                "user".to_string()
-            },
-            parts: vec![Part {
-                text: m.content.clone(),
-            }],
-        })
-        .collect();
+    let history = to_history(&messages);
 
     // Emit skill match event if any matched
     use tauri::Emitter;
