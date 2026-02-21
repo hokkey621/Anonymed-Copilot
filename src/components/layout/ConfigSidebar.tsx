@@ -9,6 +9,8 @@ import { SuggestionChips } from "@/components/chat/SuggestionChips";
 import { AgentProgressEvent } from "./ProgressIndicator";
 import { Send, FileText, Loader2, Sparkles } from "lucide-react";
 
+export type ModelProvider = "gemini" | "local_gemma";
+
 interface Message {
   role: "user" | "assistant";
   content: string;
@@ -43,11 +45,14 @@ interface AgentChatResponse {
   bulkPlan: BulkExecutionPlan | null;
   workflowSteps: WorkflowStep[] | null;
   suggestions: string[] | null;
+  appliedSkills?: string[] | null;
 }
 
 interface ConfigSidebarProps {
   onRunAnonymization: (task: string) => void;
   isProcessing: boolean;
+  selectedProvider: ModelProvider;
+  onProviderChange: (provider: ModelProvider) => void;
   currentContent: string;
   fileCount?: number;
   currentDirPath?: string;
@@ -69,14 +74,16 @@ interface ConfigSidebarProps {
   fileStatuses?: { path: string; fileName: string; status: 'approved' | 'skipped' | 'pending' }[];
 }
 
-const MODEL_OPTIONS = [
-  { value: "gemini-3.0-flash", label: "Gemini 3.0 Flash" },
-  { value: "other", label: "Other Model" },
+const MODEL_OPTIONS: { value: ModelProvider; label: string }[] = [
+  { value: "gemini", label: "Gemini" },
+  { value: "local_gemma", label: "Local Gemma (Ollama)" },
 ];
 
 export function ConfigSidebar({
   onRunAnonymization,
   isProcessing,
+  selectedProvider,
+  onProviderChange,
   currentContent,
   fileCount = 0,
   currentDirPath = "",
@@ -106,7 +113,6 @@ export function ConfigSidebar({
   const [inputInfo, setInputInfo] = useState("");
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [taskContext, setTaskContext] = useState("Medical Case Study");
-  const [selectedModel, setSelectedModel] = useState("gemini-3.0-flash");
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{ completed: number; total: number; currentFile?: string } | null>(null);
   const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([]);
@@ -152,12 +158,34 @@ export function ConfigSidebar({
     return "すみません、もう一度質問を言い換えてもらえますか？";
   };
 
+  const buildApiMessages = (history: Message[]) => {
+    // The first assistant greeting is UI guidance and should not bias the model conversation.
+    const cleaned = history.filter((m, i) => !(i === 0 && m.role === "assistant"));
+    return cleaned
+      .slice(-12)
+      .map(m => ({ role: m.role, content: m.content }));
+  };
+
+  const formatCommandError = (error: unknown): string => {
+    const raw = String(error ?? "");
+    if (raw.includes("GEMINI_API_KEY_MISSING")) {
+      return "Gemini の APIキーが未設定です。Settings から APIキーを設定してから再実行してください。";
+    }
+    if (raw.includes("OLLAMA_CONNECTION_ERROR")) {
+      return "Ollama に接続できません。`ollama serve` を起動してから再実行してください。";
+    }
+    if (raw.includes("OLLAMA_STREAM_ERROR") && raw.includes("timed out")) {
+      return "Local Gemma の応答がタイムアウトしました。短い指示にするか、再実行してください。";
+    }
+    return raw;
+  };
+
   // Keywords that indicate file content should be sent to the LLM
   const FILE_CONTENT_KEYWORDS = [
-    "計画を立てて", "実行して", "一括", "全件", "全て", "すべて",
+    "計画を立てて", "一括", "全件", "全て", "すべて",
     // スキル関連のキーワードでもファイルコンテンツを渡す
     "ワクチン", "vaccine", "教材", "教育", "症例", "研究", "開発用", "作成用",
-    "学会", "論文", "匿名化", "確認", "変更"
+    "学会", "論文", "匿名化プラン", "確認", "変更"
   ];
 
   // Helper to check if a message needs file content
@@ -168,6 +196,14 @@ export function ConfigSidebar({
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
   const allReviewed = bulkReviewMode && fileStatuses.length > 0 && fileStatuses.every(f => f.status !== 'pending');
   const approvedCount = fileStatuses.filter(f => f.status === 'approved').length;
+
+  const shouldRunAnonymizationDirectly = (text: string): boolean => {
+    const normalized = text.replace(/\s+/g, "");
+    return (
+      normalized === "実行" ||
+      normalized === "匿名化実行"
+    );
+  };
 
   // Listen for agent progress (including skill matching)
   useEffect(() => {
@@ -240,12 +276,38 @@ export function ConfigSidebar({
     const userMsg: Message = { role: "user", content: inputInfo };
     setMessages(prev => [...prev, userMsg]);
     setInputInfo("");
+
+    if (shouldRunAnonymizationDirectly(inputInfo)) {
+      if (currentDirPath && onStartBulkReview && selectedFilePaths.length > 0) {
+        setMessages(prev => [...prev, {
+          role: "assistant",
+          content: `選択された ${selectedFilePaths.length} 件を匿名化します。結果が出るまでお待ちください。`
+        }]);
+        onStartBulkReview(taskContext);
+        return;
+      }
+
+      if (!currentContent) {
+        setMessages(prev => [...prev, {
+          role: "assistant",
+          content: "匿名化するテキストがありません。先にファイルを開いてください。"
+        }]);
+        return;
+      }
+      setMessages(prev => [...prev, {
+        role: "assistant",
+        content: "匿名化を実行します。結果が出るまでお待ちください。"
+      }]);
+      onRunAnonymization(taskContext);
+      return;
+    }
+
     setIsChatLoading(true);
 
     const needsFileContent = checkNeedsFileContent(inputInfo);
 
     const newHistory = [...messages, userMsg];
-    let apiMessages = newHistory.map(m => ({ role: m.role, content: m.content }));
+    const apiMessages = buildApiMessages(newHistory);
 
     // NOTE: ファイル内容は editorContent 経由でのみ送信し、二重送信を避ける
 
@@ -256,7 +318,8 @@ export function ConfigSidebar({
       const response = await invoke<AgentChatResponse>("agent_chat_streaming", {
         messages: apiMessages,
         fileCount: fileCount,
-        editorContent: needsFileContent ? (currentContent || null) : null
+        editorContent: needsFileContent ? (currentContent || null) : null,
+        provider: selectedProvider,
       });
 
       const newMessage: Message = {
@@ -273,6 +336,7 @@ export function ConfigSidebar({
         setActiveBulkPlan(response.bulkPlan);
         setWorkflowSteps(response.workflowSteps);
       }
+      setActiveSkills(response.appliedSkills ?? []);
 
       // Auto-detect task context
       const lowerInput = inputInfo.toLowerCase();
@@ -283,7 +347,7 @@ export function ConfigSidebar({
       }
     } catch (e) {
       console.error("Chat error:", e);
-      setMessages(prev => [...prev, { role: "assistant", content: `エラー: ${e}` }]);
+      setMessages(prev => [...prev, { role: "assistant", content: `エラー: ${formatCommandError(e)}` }]);
     } finally {
       setIsChatLoading(false);
     }
@@ -332,7 +396,7 @@ export function ConfigSidebar({
     }
   };
 
-  const modelLabel = MODEL_OPTIONS.find(m => m.value === selectedModel)?.label || selectedModel;
+  const modelLabel = MODEL_OPTIONS.find(m => m.value === selectedProvider)?.label || selectedProvider;
 
   return (
     <div className="h-full flex flex-col bg-background">
@@ -367,12 +431,38 @@ export function ConfigSidebar({
 
                 const userMsg: Message = { role: "user", content: text };
                 setMessages(prev => [...prev, userMsg]);
+
+                if (shouldRunAnonymizationDirectly(text)) {
+                  if (currentDirPath && onStartBulkReview && selectedFilePaths.length > 0) {
+                    setMessages(prev => [...prev, {
+                      role: "assistant",
+                      content: `選択された ${selectedFilePaths.length} 件を匿名化します。結果が出るまでお待ちください。`
+                    }]);
+                    onStartBulkReview(taskContext);
+                    return;
+                  }
+
+                  if (!currentContent) {
+                    setMessages(prev => [...prev, {
+                      role: "assistant",
+                      content: "匿名化するテキストがありません。先にファイルを開いてください。"
+                    }]);
+                    return;
+                  }
+                  setMessages(prev => [...prev, {
+                    role: "assistant",
+                    content: "匿名化を実行します。結果が出るまでお待ちください。"
+                  }]);
+                  onRunAnonymization(taskContext);
+                  return;
+                }
+
                 setIsChatLoading(true);
 
                 const needsFileContent = checkNeedsFileContent(text);
 
                 const newHistory = [...messages, userMsg];
-                let apiMessages = newHistory.map(m => ({ role: m.role, content: m.content }));
+                const apiMessages = buildApiMessages(newHistory);
 
                 // NOTE: ファイル内容は editorContent 経由でのみ送信し、二重送信を避ける
 
@@ -381,7 +471,8 @@ export function ConfigSidebar({
                   const response = await invoke<AgentChatResponse>("agent_chat_streaming", {
                     messages: apiMessages,
                     fileCount: fileCount,
-                    editorContent: needsFileContent ? (currentContent || null) : null
+                    editorContent: needsFileContent ? (currentContent || null) : null,
+                    provider: selectedProvider,
                   });
 
                   const newMessage: Message = {
@@ -398,9 +489,10 @@ export function ConfigSidebar({
                     setActiveBulkPlan(response.bulkPlan);
                     setWorkflowSteps(response.workflowSteps);
                   }
+                  setActiveSkills(response.appliedSkills ?? []);
                 } catch (e) {
                   console.error("Chat error:", e);
-                  setMessages(prev => [...prev, { role: "assistant", content: `エラー: ${e}` }]);
+                  setMessages(prev => [...prev, { role: "assistant", content: `エラー: ${formatCommandError(e)}` }]);
                 } finally {
                   setIsChatLoading(false);
                 }
@@ -626,19 +718,21 @@ export function ConfigSidebar({
           <div className="relative">
             <button
               onClick={() => setShowModelDropdown(!showModelDropdown)}
-              className="flex items-center gap-1 px-2 py-1 rounded hover:bg-muted transition-colors text-muted-foreground opacity-50 cursor-default"
-              disabled={true}
+              className="flex items-center gap-1 px-2 py-1 rounded hover:bg-muted transition-colors text-muted-foreground"
             >
               {modelLabel}
               {/* <ChevronDown size={12} /> */}
             </button>
             {showModelDropdown && (
-              <div className="hidden absolute bottom-full left-0 mb-1 bg-popover border rounded-md shadow-lg py-1 min-w-[160px] z-50">
+              <div className="absolute bottom-full left-0 mb-1 bg-popover border rounded-md shadow-lg py-1 min-w-[180px] z-50">
                 {MODEL_OPTIONS.map(opt => (
                   <button
                     key={opt.value}
-                    onClick={() => { setSelectedModel(opt.value); setShowModelDropdown(false); }}
-                    className={`w-full text-left px-3 py-1.5 hover:bg-muted ${selectedModel === opt.value ? 'text-blue-500' : ''}`}
+                    onClick={() => {
+                      onProviderChange(opt.value);
+                      setShowModelDropdown(false);
+                    }}
+                    className={`w-full text-left px-3 py-1.5 hover:bg-muted ${selectedProvider === opt.value ? 'text-blue-500' : ''}`}
                   >
                     {opt.label}
                   </button>

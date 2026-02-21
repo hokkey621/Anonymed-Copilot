@@ -65,14 +65,14 @@ export function ApiKeyModal({ isOpen, onSaved, onClose }: ApiKeyModalProps) {
           </div>
           <div>
             <h2 className="text-lg font-semibold">APIキーの設定</h2>
-            <p className="text-xs text-muted-foreground">Google Gemini APIを利用します</p>
+            <p className="text-xs text-muted-foreground">Gemini利用時のみ必要です</p>
           </div>
         </div>
 
         <div className="p-6 space-y-4">
           <div>
             <label className="block text-sm font-medium mb-2">
-              Gemini APIキー
+              Gemini APIキー（任意: Local Gemma利用時は不要）
             </label>
             <input
               type="password"

@@ -23,9 +23,14 @@ AIが自動で個人情報を検出し、適切な形式に置き換えます。
 | macOS | `Anonymed-Copilot_x.x.x_aarch64.dmg` または `.app` |
 | Windows | `Anonymed-Copilot_x.x.x_x64-setup.exe` |
 
-### 2. APIキーを取得（無料）
+### 2. モデルを選ぶ
 
-このアプリはGoogle Gemini APIを使用しています。
+このアプリは以下の2つを切り替えて利用できます。
+
+- **Gemini**: APIキーが必要
+- **Local Gemma (Ollama)**: APIキー不要（`gemma3:12b-it-qat`）
+
+#### Gemini を使う場合（無料）
 
 1. [Google AI Studio](https://aistudio.google.com/apikey) にアクセス
 2. Googleアカウントでログイン
@@ -34,6 +39,13 @@ AIが自動で個人情報を検出し、適切な形式に置き換えます。
 
 > [!TIP]
 > **無料枠について**: Gemini APIは無料枠が十分にあり、通常の利用であれば料金は発生しません。
+
+#### Local Gemma を使う場合
+
+```bash
+ollama pull gemma3:12b-it-qat
+ollama serve
+```
 
 ### 3. アプリを起動
 
@@ -74,7 +86,7 @@ npm install
 npm run tauri dev
 ```
 > [!IMPORTANT]
-> 開発モードでは、`src-tauri/.env` に `GOOGLE_API_KEY=your-key` を設定するか、アプリ起動後にUIから設定してください。
+> Gemini を使う場合は `src-tauri/.env` に `GOOGLE_API_KEY=your-key` を設定するか、アプリ起動後にUIから設定してください。Local Gemma のみを使う場合は APIキー不要です。
 
 ### ビルド
 
@@ -99,7 +111,7 @@ npm run tauri build
 |---------|------|
 | Frontend | React 19, TypeScript, Tailwind CSS, Monaco Editor |
 | Backend | Rust, Tauri 2.0 |
-| AI | Google Gemini API |
+| AI | Google Gemini API / Local Gemma (Ollama, `gemma3:12b-it-qat`) |
 
 ## ライセンス
 

@@ -1,8 +1,9 @@
 import { AnonPlan } from "@/domain/model";
 import { createDefaultPlan } from "@/domain/utils";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useState, useEffect } from "react";
-import { ConfigSidebar } from "./ConfigSidebar";
+import { ConfigSidebar, ModelProvider } from "./ConfigSidebar";
 import { EditorPanel } from "./EditorPanel";
 import { FileExplorer, OpenedFile } from "./FileExplorer";
 import { MenuBar } from "./MenuBar";
@@ -40,6 +41,37 @@ interface OpenedFileState extends OpenedFile {
   plan: AnonPlan;
 }
 
+interface AppSettingsView {
+  selectedProvider: ModelProvider;
+  ollamaBaseUrl: string;
+  hasApiKey: boolean;
+}
+
+interface BulkAnalyzeItem {
+  path: string;
+  fileName: string;
+  original: string;
+  anonymized: string;
+  plan: AnonPlan;
+}
+
+interface BulkAnalyzeFailure {
+  path: string;
+  fileName: string;
+  error: string;
+}
+
+interface BulkAnalyzeResponse {
+  items: BulkAnalyzeItem[];
+  failures: BulkAnalyzeFailure[];
+}
+
+interface BulkAnalysisProgressEvent {
+  completed: number;
+  total: number;
+  currentFile: string;
+}
+
 export function MainLayout() {
   const [originalContent, setOriginalContent] = useState<string>("");
   const [anonymizedContent, setAnonymizedContent] = useState<string>("");
@@ -62,32 +94,78 @@ export function MainLayout() {
   // API Key modal state
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const [_hasApiKey, setHasApiKey] = useState(true); // Assume true initially
+  const [selectedProvider, setSelectedProvider] = useState<ModelProvider>("gemini");
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
 
   const formatError = (error: unknown): string => {
-    if (typeof error === "string") return error;
-    if (error instanceof Error) return error.message;
-    try {
-      return JSON.stringify(error);
-    } catch {
-      return String(error);
+    const raw =
+      typeof error === "string"
+        ? error
+        : error instanceof Error
+          ? error.message
+          : (() => {
+              try {
+                return JSON.stringify(error);
+              } catch {
+                return String(error);
+              }
+            })();
+
+    if (raw.includes("GEMINI_API_KEY_MISSING")) {
+      return "Gemini の APIキーが未設定です。Settings から APIキーを設定してください。";
     }
+    if (raw.includes("OLLAMA_CONNECTION_ERROR")) {
+      return "Ollama に接続できません。`ollama serve` を起動してください。";
+    }
+    if (raw.includes("OLLAMA_STREAM_ERROR") && raw.includes("timed out")) {
+      return "Local Gemma の応答がタイムアウトしました。短い指示にするか、再実行してください。";
+    }
+
+    return raw;
   };
 
-  // Check for API key on mount
+  // Load settings on mount
   useEffect(() => {
-    const checkApiKey = async () => {
+    const loadSettings = async () => {
       try {
-        const hasKey = await invoke<boolean>("has_api_key");
-        setHasApiKey(hasKey);
-        if (!hasKey) {
+        const settings = await invoke<AppSettingsView>("load_app_settings");
+        const provider = settings.selectedProvider ?? "gemini";
+        setSelectedProvider(provider);
+        setHasApiKey(settings.hasApiKey);
+        if (provider === "gemini" && !settings.hasApiKey) {
           setShowApiKeyModal(true);
         }
+        setSettingsLoaded(true);
       } catch (e) {
-        console.error("Failed to check API key:", e);
+        console.error("Failed to load settings:", e);
         setShowApiKeyModal(true);
+        setSettingsLoaded(true);
       }
     };
-    checkApiKey();
+    loadSettings();
+  }, []);
+
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    invoke("save_selected_provider", { provider: selectedProvider }).catch((e) => {
+      console.error("Failed to save selected provider:", e);
+    });
+  }, [selectedProvider, settingsLoaded]);
+
+  useEffect(() => {
+    const unlisten = listen<BulkAnalysisProgressEvent>("bulk-analysis-progress", (event) => {
+      const { completed, total } = event.payload;
+      setBulkAnalysisProgress(prev => ({
+        ...prev,
+        completed,
+        total,
+        isAnalyzing: true,
+      }));
+    });
+
+    return () => {
+      unlisten.then((f) => f());
+    };
   }, []);
 
   const activeFile = openedFiles.find(f => f.path === activeFilePath) || null;
@@ -250,7 +328,11 @@ export function MainLayout() {
     setIsProcessing(true);
     try {
         console.info("[UI] Analyze text request:", { task, length: originalContent.length });
-        const plan = await invoke<AnonPlan>("analyze_text", { text: originalContent, taskContext: task });
+        const plan = await invoke<AnonPlan>("analyze_text", {
+          text: originalContent,
+          taskContext: task,
+          provider: selectedProvider,
+        });
         setCurrentPlan(plan);
         console.info("[UI] Apply plan request:", { replacements: plan.replacements?.length ?? 0 });
         const result = await invoke<string>("apply_plan", { text: originalContent, plan });
@@ -287,7 +369,11 @@ export function MainLayout() {
 
     } catch (e) {
         console.error("[UI] Anonymization failed:", e);
-        setAnonymizedContent(`Error: ${e}`);
+        const message = formatError(e);
+        if (message.includes("APIキー")) {
+          setShowApiKeyModal(true);
+        }
+        setAnonymizedContent(`Error: ${message}`);
     } finally {
         setIsProcessing(false);
     }
@@ -355,112 +441,31 @@ export function MainLayout() {
     const targetFiles = Array.from(selectedFilesForBulk);
     const total = targetFiles.length;
 
-    // Start analysis phase (total may be adjusted after read)
+    // Start analysis phase
     setBulkAnalysisProgress({ completed: 0, total, isAnalyzing: true });
     setIsProcessing(true);
 
     try {
-      // Read all file contents first
       console.log("[Bulk Review] Starting with files:", targetFiles);
-      const fileContents: {path: string, fileName: string, content: string}[] = [];
-      const readFailures: { fileName: string; error: string }[] = [];
-      for (const filePath of targetFiles) {
-        try {
-          console.log("[Bulk Review] Reading file:", filePath);
-          const result = await invoke<{path: string, content: string, filename: string}>("read_file_content", { filePath });
-          console.log("[Bulk Review] Read success:", result.filename, "content length:", result.content.length);
-          fileContents.push({ path: filePath, fileName: result.filename, content: result.content });
-        } catch (readError) {
-          console.error("[Bulk Review] Failed to read file:", {
-            path: filePath,
-            error: readError,
-          });
-          readFailures.push({
-            fileName: filePath.split("/").pop() || filePath,
-            error: formatError(readError),
-          });
-        }
-      }
-      console.log("[Bulk Review] Total files read:", fileContents.length, "of", targetFiles.length);
-      if (fileContents.length > 0) {
-        console.log(
-          "[Bulk Review] Read files:",
-          fileContents.map((f) => ({
-            name: f.fileName,
-            path: f.path,
-            size: f.content.length,
-          }))
-        );
-      }
-
-      if (readFailures.length > 0) {
-        console.warn("[Bulk Review] Read failures:", readFailures);
-        alert(
-          `読み込みに失敗したファイルがあります:\n${readFailures
-            .map(f => `- ${f.fileName}: ${f.error}`)
-            .join("\n")}`
-        );
-      }
-
-      setBulkAnalysisProgress(prev => ({
-        ...prev,
-        total: fileContents.length,
-        completed: 0
+      const response = await invoke<BulkAnalyzeResponse>("bulk_analyze_files", {
+        targetFiles,
+        taskContext,
+        provider: selectedProvider,
+      });
+      const validResults = response.items;
+      const analysisFailures = response.failures.map((f) => ({
+        fileName: f.fileName,
+        error: f.error,
       }));
 
-      // Analyze each file with AI in parallel (Promise.all with progress tracking)
-      let completedCount = 0;
-      const analysisFailures: { fileName: string; error: string }[] = [];
-      const analysisPromises = fileContents.map(async (file) => {
-        try {
-          console.log("[Bulk Review] Analyzing:", file.fileName, file.path);
-          // Call analyze_text for this specific file
-          const plan = await invoke<AnonPlan>("analyze_text", {
-            text: file.content,
-            taskContext
-          });
-          console.log("[Bulk Review] Plan generated:", {
-            file: file.fileName,
-            replacements: plan.replacements?.length ?? 0,
-            status: plan.status,
-          });
-          // Apply the plan
-          const anonymized = await invoke<string>("apply_plan", {
-            text: file.content,
-            plan
-          });
-          console.log("[Bulk Review] Apply plan complete:", {
-            file: file.fileName,
-            outputSize: anonymized.length,
-          });
+      console.log("[Bulk Review] Valid results:", validResults.length, "of", targetFiles.length);
 
-          // Update progress
-          completedCount++;
-          setBulkAnalysisProgress(prev => ({ ...prev, completed: completedCount }));
-
-          return {
-            path: file.path,
-            fileName: file.fileName,
-            original: file.content,
-            anonymized,
-            plan,
-          };
-        } catch (e) {
-          console.error("[Bulk Review] Failed to analyze:", {
-            file: file.fileName,
-            path: file.path,
-            error: e,
-          });
-          analysisFailures.push({ fileName: file.fileName, error: formatError(e) });
-          completedCount++;
-          setBulkAnalysisProgress(prev => ({ ...prev, completed: completedCount }));
-          return null;
-        }
-      });
-
-      const results = await Promise.all(analysisPromises);
-      const validResults = results.filter((r): r is NonNullable<typeof r> => r !== null);
-      console.log("[Bulk Review] Valid results:", validResults.length, "of", results.length);
+      // Check if we have any valid results
+      if (validResults.length === 0) {
+        console.error("[Bulk Review] No files were successfully analyzed!");
+        alert("エラー: ファイルの分析に失敗しました。コンソールログを確認してください。");
+        return;
+      }
 
       if (analysisFailures.length > 0) {
         console.warn("[Bulk Review] Analysis failures:", analysisFailures);
@@ -471,16 +476,13 @@ export function MainLayout() {
         );
       }
 
-      // Check if we have any valid results
-      if (validResults.length === 0) {
-        console.error("[Bulk Review] No files were successfully analyzed!");
-        alert("エラー: ファイルの分析に失敗しました。コンソールログを確認してください。");
-        return;
-      }
-
       // Analysis complete - enter review mode
       console.log("[Bulk Review] Entering review mode with", validResults.length, "files");
-      setBulkAnalysisProgress(prev => ({ ...prev, isAnalyzing: false }));
+      setBulkAnalysisProgress(prev => ({
+        ...prev,
+        completed: prev.total,
+        isAnalyzing: false
+      }));
       setBulkReviewQueue(validResults);
       setBulkReviewIndex(0);
       setBulkApprovedResults(new Map());
@@ -494,7 +496,9 @@ export function MainLayout() {
       }
     } catch (e) {
       console.error("Bulk analysis failed:", e);
+      alert(`解析に失敗しました: ${formatError(e)}`);
     } finally {
+      setBulkAnalysisProgress(prev => ({ ...prev, isAnalyzing: false }));
       setIsProcessing(false);
     }
   };
@@ -626,6 +630,23 @@ export function MainLayout() {
     setAnonymizedContent("");
   };
 
+  const handleProviderChange = async (provider: ModelProvider) => {
+    setSelectedProvider(provider);
+    if (provider === "gemini") {
+      try {
+        const hasKey = await invoke<boolean>("has_api_key_for_provider", { provider });
+        setHasApiKey(hasKey);
+        if (!hasKey) {
+          setShowApiKeyModal(true);
+        }
+      } catch (e) {
+        console.error("Failed to check provider credential:", e);
+      }
+    } else {
+      setShowApiKeyModal(false);
+    }
+  };
+
   const hasUnsavedChanges = originalContent !== anonymizedContent;
 
   return (
@@ -708,6 +729,8 @@ export function MainLayout() {
              <ConfigSidebar
                 onRunAnonymization={handleAnonymize}
                 isProcessing={isProcessing}
+                selectedProvider={selectedProvider}
+                onProviderChange={handleProviderChange}
                 currentContent={originalContent}
                 currentPlan={currentPlan}
                 fileCount={selectedFilesForBulk.size > 0 ? selectedFilesForBulk.size : folderFiles.filter(f => !f.isDir).length}

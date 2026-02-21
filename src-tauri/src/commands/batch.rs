@@ -1,9 +1,12 @@
 use crate::domain::agent_orchestrator::AgentOrchestrator;
 use crate::domain::model::{AnonPlan, AuditLog};
+use crate::domain::skills::{find_matching_skills, get_skill_names};
+use crate::infrastructure::llm::ModelProvider;
 use crate::utils::access_control::AccessControl;
 use crate::utils::file_reader::read_file_with_encoding;
 use crate::utils::path_guard::sanitize_task_name;
 use crate::utils::plan_apply::apply_plan_to_text;
+use futures_util::stream::{self, StreamExt};
 use rayon::prelude::*;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -47,6 +50,39 @@ pub struct DryRunResult {
     pub success_count: usize,
     pub error_files: Vec<String>,
     pub warnings: Vec<DryRunWarning>,
+}
+
+#[derive(Clone, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkAnalyzeItem {
+    pub path: String,
+    pub file_name: String,
+    pub original: String,
+    pub anonymized: String,
+    pub plan: AnonPlan,
+}
+
+#[derive(Clone, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkAnalyzeFailure {
+    pub path: String,
+    pub file_name: String,
+    pub error: String,
+}
+
+#[derive(Clone, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkAnalyzeResponse {
+    pub items: Vec<BulkAnalyzeItem>,
+    pub failures: Vec<BulkAnalyzeFailure>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkAnalysisProgressEvent {
+    pub completed: usize,
+    pub total: usize,
+    pub current_file: String,
 }
 
 /// Calculate SHA-256 hash of content
@@ -342,6 +378,179 @@ pub async fn bulk_execute(
     })
 }
 
+/// Read + analyze + apply plan for multiple files in parallel.
+/// This is intended for interactive bulk review mode.
+#[tauri::command]
+pub async fn bulk_analyze_files(
+    app: tauri::AppHandle,
+    target_files: Vec<String>,
+    task_context: String,
+    provider: ModelProvider,
+    access_control: State<'_, AccessControl>,
+) -> Result<BulkAnalyzeResponse, String> {
+    let snapshot = access_control.snapshot()?;
+    let mut failures: Vec<BulkAnalyzeFailure> = Vec::new();
+    let mut allowed_files: Vec<(String, String, std::path::PathBuf)> = Vec::new();
+
+    for path_str in target_files {
+        let path = match snapshot.ensure_allowed(Path::new(&path_str)) {
+            Ok(p) => p,
+            Err(e) => {
+                failures.push(BulkAnalyzeFailure {
+                    path: path_str.clone(),
+                    file_name: Path::new(&path_str)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or(path_str),
+                    error: e,
+                });
+                continue;
+            }
+        };
+
+        if !path.is_file() {
+            failures.push(BulkAnalyzeFailure {
+                path: path_str.clone(),
+                file_name: path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or(path_str),
+                error: "Path is not a file".to_string(),
+            });
+            continue;
+        }
+
+        let file_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path_str.clone());
+        allowed_files.push((path_str, file_name, path));
+    }
+
+    let total = allowed_files.len();
+    if total == 0 {
+        return Ok(BulkAnalyzeResponse {
+            items: vec![],
+            failures,
+        });
+    }
+
+    // Plan once from task context + skill hints, without loading file contents.
+    let orchestrator = AgentOrchestrator::new(&app, provider.clone())?;
+    let matching_skills = find_matching_skills(&task_context);
+    let skill_names = get_skill_names(&matching_skills);
+    let strategy = orchestrator
+        .plan_strategy_without_text(&task_context, &matching_skills)
+        .await
+        .map_err(|e| format!("Failed to plan anonymization strategy: {}", e))?;
+    let shared_orchestrator = Arc::new(orchestrator);
+    let shared_strategy = Arc::new(strategy);
+    let shared_skill_names = Arc::new(skill_names);
+
+    let concurrency = if provider == ModelProvider::LocalGemma {
+        2
+    } else {
+        4
+    };
+    let completed_count = Arc::new(AtomicUsize::new(0));
+
+    let mut items: Vec<BulkAnalyzeItem> = Vec::new();
+
+    let outcomes = stream::iter(
+        allowed_files
+            .into_iter()
+            .map(|(path_str, file_name, path)| {
+                let app = app.clone();
+                let completed_count = Arc::clone(&completed_count);
+                let shared_orchestrator = Arc::clone(&shared_orchestrator);
+                let shared_strategy = Arc::clone(&shared_strategy);
+                let shared_skill_names = Arc::clone(&shared_skill_names);
+
+                async move {
+                    let emit_progress = |current_file: &str| {
+                        let current = completed_count.fetch_add(1, Ordering::Relaxed) + 1;
+                        let _ = app.emit(
+                            "bulk-analysis-progress",
+                            BulkAnalysisProgressEvent {
+                                completed: current,
+                                total,
+                                current_file: current_file.to_string(),
+                            },
+                        );
+                    };
+
+                    let original = match read_file_with_encoding(&path) {
+                        Ok(content) => content,
+                        Err(e) => {
+                            emit_progress(file_name.as_str());
+                            return Err(BulkAnalyzeFailure {
+                                path: path_str,
+                                file_name,
+                                error: format!("Failed to read file: {}", e),
+                            });
+                        }
+                    };
+
+                    let replacements = match shared_orchestrator
+                        .execute_strategy(shared_strategy.as_ref(), &original)
+                        .await
+                    {
+                        Ok(replacements) => replacements,
+                        Err(e) => {
+                            emit_progress(file_name.as_str());
+                            return Err(BulkAnalyzeFailure {
+                                path: path_str,
+                                file_name,
+                                error: format!("Failed to execute anonymization: {}", e),
+                            });
+                        }
+                    };
+
+                    let plan = AnonPlan {
+                        task_name: shared_strategy.task_context.clone(),
+                        global_rules: std::collections::HashMap::new(),
+                        replacements,
+                        status: "draft".to_string(),
+                        applied_skills: shared_skill_names.as_ref().clone(),
+                    };
+
+                    let anonymized = match apply_plan_to_text(&original, &plan, true) {
+                        Ok(anonymized) => anonymized,
+                        Err(e) => {
+                            emit_progress(file_name.as_str());
+                            return Err(BulkAnalyzeFailure {
+                                path: path_str,
+                                file_name,
+                                error: format!("Failed to apply plan: {}", e),
+                            });
+                        }
+                    };
+
+                    emit_progress(file_name.as_str());
+                    Ok(BulkAnalyzeItem {
+                        path: path_str,
+                        file_name,
+                        original,
+                        anonymized,
+                        plan,
+                    })
+                }
+            }),
+    )
+    .buffer_unordered(concurrency)
+    .collect::<Vec<Result<BulkAnalyzeItem, BulkAnalyzeFailure>>>()
+    .await;
+
+    for outcome in outcomes {
+        match outcome {
+            Ok(item) => items.push(item),
+            Err(failure) => failures.push(failure),
+        }
+    }
+
+    Ok(BulkAnalyzeResponse { items, failures })
+}
+
 #[tauri::command]
 pub async fn process_bulk(
     app: tauri::AppHandle,
@@ -356,7 +565,7 @@ pub async fn process_bulk(
     }
 
     // 1. Initialize Orchestrator
-    let orchestrator = AgentOrchestrator::new(&app)?;
+    let orchestrator = AgentOrchestrator::new(&app, ModelProvider::Gemini)?;
 
     // 2. List files
     let entries: Vec<_> = fs::read_dir(&path)
