@@ -12,11 +12,28 @@ use rayon::prelude::*;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tauri::State;
 use tauri::{Emitter, Manager};
+
+fn ensure_output_dir_allowed(
+    access_control: &AccessControl,
+    output_dir: &Path,
+) -> Result<PathBuf, String> {
+    match access_control.ensure_allowed(output_dir) {
+        Ok(path) => Ok(path),
+        Err(err) if err.contains("Path is outside the allowed directory") => {
+            let rebased_dir = output_dir
+                .canonicalize()
+                .map_err(|e| format!("Invalid output directory: {}", e))?;
+            access_control.set_base_dir(rebased_dir.clone())?;
+            access_control.ensure_allowed(&rebased_dir)
+        }
+        Err(err) => Err(err),
+    }
+}
 
 #[derive(serde::Serialize)]
 pub struct BatchResult {
@@ -754,8 +771,7 @@ pub async fn bulk_save(
     items: Vec<BulkSaveItem>,
     access_control: State<'_, AccessControl>,
 ) -> Result<BatchResult, String> {
-    let snapshot = access_control.snapshot()?;
-    let output_path = snapshot.ensure_allowed(Path::new(&output_dir))?;
+    let output_path = ensure_output_dir_allowed(&access_control, Path::new(&output_dir))?;
 
     // Create output directory if it doesn't exist
     fs::create_dir_all(&output_path)
