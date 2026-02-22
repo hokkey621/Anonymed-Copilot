@@ -3,7 +3,8 @@ import { createDefaultPlan } from "@/domain/utils";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useState, useEffect } from "react";
-import { ConfigSidebar, ModelProvider } from "./ConfigSidebar";
+import { ConfigSidebar } from "./ConfigSidebar";
+import type { ModelProvider } from "./chat/types";
 import { EditorPanel } from "./EditorPanel";
 import { FileExplorer, OpenedFile } from "./FileExplorer";
 import { MenuBar } from "./MenuBar";
@@ -64,6 +65,7 @@ interface BulkAnalyzeFailure {
 interface BulkAnalyzeResponse {
   items: BulkAnalyzeItem[];
   failures: BulkAnalyzeFailure[];
+  cancelled: boolean;
 }
 
 interface BulkAnalysisProgressEvent {
@@ -370,6 +372,7 @@ export function MainLayout() {
     } catch (e) {
         console.error("[UI] Anonymization failed:", e);
         const message = formatError(e);
+        alert(message);
         if (message.includes("APIキー")) {
           setShowApiKeyModal(true);
         }
@@ -457,13 +460,26 @@ export function MainLayout() {
         fileName: f.fileName,
         error: f.error,
       }));
+      const wasCancelled = response.cancelled;
 
       console.log("[Bulk Review] Valid results:", validResults.length, "of", targetFiles.length);
 
       // Check if we have any valid results
       if (validResults.length === 0) {
-        console.error("[Bulk Review] No files were successfully analyzed!");
-        alert("エラー: ファイルの分析に失敗しました。コンソールログを確認してください。");
+        if (wasCancelled) {
+          alert("解析を停止しました。");
+          return;
+        }
+        console.error("[Bulk Review] No files were successfully analyzed!", analysisFailures);
+        if (analysisFailures.length > 0) {
+          alert(
+            `すべてのファイル解析に失敗しました:\n${analysisFailures
+              .map(f => `- ${f.fileName}: ${f.error}`)
+              .join("\n")}`
+          );
+        } else {
+          alert("エラー: ファイルの分析に失敗しました。コンソールログを確認してください。");
+        }
         return;
       }
 
@@ -473,6 +489,12 @@ export function MainLayout() {
           `解析に失敗したファイルがあります:\n${analysisFailures
             .map(f => `- ${f.fileName}: ${f.error}`)
             .join("\n")}`
+        );
+      }
+
+      if (wasCancelled) {
+        alert(
+          `解析を停止しました。完了済み ${validResults.length} 件のみレビューします。`
         );
       }
 
@@ -500,6 +522,14 @@ export function MainLayout() {
     } finally {
       setBulkAnalysisProgress(prev => ({ ...prev, isAnalyzing: false }));
       setIsProcessing(false);
+    }
+  };
+
+  const handleStopOperations = async () => {
+    try {
+      await invoke("cancel_active_operations");
+    } catch (e) {
+      console.error("Failed to cancel active operations:", e);
     }
   };
 
@@ -733,10 +763,20 @@ export function MainLayout() {
                 onProviderChange={handleProviderChange}
                 currentContent={originalContent}
                 currentPlan={currentPlan}
-                fileCount={selectedFilesForBulk.size > 0 ? selectedFilesForBulk.size : folderFiles.filter(f => !f.isDir).length}
+                fileCount={
+                  selectedFilesForBulk.size > 0
+                    ? selectedFilesForBulk.size
+                    : currentFolder
+                      ? folderFiles.filter(f => !f.isDir).length
+                      : openedFiles.length > 0
+                        ? 1
+                        : 0
+                }
                 currentFileName={activeFile?.filename}
                 currentDirPath={currentFolder?.path}
                 selectedFilePaths={Array.from(selectedFilesForBulk)}
+                onOpenFile={handleOpenFile}
+                onOpenFolder={handleOpenFolder}
                 onStartBulkReview={handleStartBulkReview}
                 bulkReviewMode={bulkReviewMode}
                 bulkReviewProgress={bulkReviewMode ? { current: bulkReviewIndex + 1, total: bulkReviewQueue.length, fileName: bulkReviewQueue[bulkReviewIndex]?.fileName || "" } : undefined}
@@ -745,6 +785,7 @@ export function MainLayout() {
                 onBulkCancel={handleBulkCancel}
                 onBulkPrevious={handleBulkPrevious}
                 onBulkComplete={handleBulkComplete}
+                onStopOperations={handleStopOperations}
                 canGoPrevious={bulkReviewIndex > 0}
                 canGoNext={bulkReviewIndex < bulkReviewQueue.length - 1}
                 fileStatuses={bulkReviewQueue.map(f => ({

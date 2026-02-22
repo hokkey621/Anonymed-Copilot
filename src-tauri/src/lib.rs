@@ -2,15 +2,18 @@ pub mod commands;
 pub mod domain;
 pub mod infrastructure;
 pub mod prompts;
+pub mod state;
 pub mod utils;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(utils::access_control::AccessControl::default())
+        .manage(state::CancellationState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            commands::control::cancel_active_operations,
             commands::anonymizer::analyze_text,
             commands::anonymizer::apply_plan,
             commands::anonymizer::chat_with_ai,

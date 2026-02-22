@@ -5,6 +5,7 @@ use std::time::Duration;
 use tauri::{Emitter, Manager};
 
 use crate::infrastructure::llm::{LlmMessage, DEFAULT_OLLAMA_BASE_URL, LOCAL_GEMMA_MODEL};
+use crate::state::CancellationState;
 
 #[derive(Serialize)]
 struct OllamaChatRequest {
@@ -291,7 +292,7 @@ impl OllamaHandler {
                 .chat_once(
                     turns,
                     Some(&strict_system_prompt),
-                    0.1,
+                    0.0,
                     if attempt == 1 {
                         base_num_predict
                     } else {
@@ -369,8 +370,27 @@ impl OllamaHandler {
         let mut full_text = String::new();
         let mut pending = String::new();
         let mut stream = response.bytes_stream();
+        let emit_end = |reason: &str, full: &str| {
+            let _ = app.emit(
+                "chat-stream-end",
+                serde_json::json!({
+                    "full": full,
+                    "reason": reason
+                }),
+            );
+        };
+
+        if app.state::<CancellationState>().is_chat_cancelled() {
+            emit_end("cancelled", &full_text);
+            return Ok(full_text);
+        }
 
         while let Some(next) = stream.next().await {
+            if app.state::<CancellationState>().is_chat_cancelled() {
+                emit_end("cancelled", &full_text);
+                return Ok(full_text);
+            }
+
             let chunk = next.map_err(|e| format!("OLLAMA_STREAM_ERROR: {}", e))?;
             pending.push_str(&String::from_utf8_lossy(&chunk));
 
@@ -398,6 +418,11 @@ impl OllamaHandler {
         }
 
         if !pending.trim().is_empty() {
+            if app.state::<CancellationState>().is_chat_cancelled() {
+                emit_end("cancelled", &full_text);
+                return Ok(full_text);
+            }
+
             if let Ok(msg) = serde_json::from_str::<OllamaStreamResponse>(pending.trim()) {
                 if let Some(content) = msg.message.map(|m| m.content).filter(|c| !c.is_empty()) {
                     full_text.push_str(&content);
@@ -412,12 +437,7 @@ impl OllamaHandler {
             }
         }
 
-        let _ = app.emit(
-            "chat-stream-end",
-            serde_json::json!({
-                "full": full_text.clone()
-            }),
-        );
+        emit_end("completed", &full_text);
 
         if full_text.trim().is_empty() {
             return Err(

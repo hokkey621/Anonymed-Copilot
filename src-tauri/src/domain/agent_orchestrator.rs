@@ -2,7 +2,7 @@ use crate::domain::model::{AnonPlan, ReplacementEntry};
 use crate::domain::skills::{build_prompt_with_skills, find_matching_skills, get_skill_names};
 use crate::infrastructure::llm::{LlmClient, ModelProvider};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tauri::{AppHandle, Emitter};
 
 #[derive(Serialize, Clone)]
@@ -19,11 +19,6 @@ pub struct AnonymizationStrategy {
     pub date_handling: String, // "relative", "mask", "keep"
     pub name_handling: String, // "pseudonym", "replace_tag", "keep"
     pub specific_instructions: String,
-}
-
-#[derive(Deserialize)]
-struct ExecutorOutput {
-    replacements: Vec<ReplacementEntry>,
 }
 
 #[derive(Deserialize)]
@@ -52,17 +47,109 @@ pub struct AgentOrchestrator {
 }
 
 impl AgentOrchestrator {
+    fn normalize_category(raw: Option<&str>) -> Option<String> {
+        let normalized = raw
+            .map(|v| v.trim().to_ascii_uppercase())
+            .filter(|v| !v.is_empty())?;
+
+        let category = match normalized.as_str() {
+            "P_NAME" | "PATIENT_NAME" | "PATIENT" | "PER" | "PERSON" => "P_NAME",
+            "S_NAME" | "STAFF_NAME" | "DOCTOR_NAME" | "FAMILY_NAME" => "S_NAME",
+            "HOSP" | "HOSPITAL" | "ORG" | "ORGANIZATION" => "HOSP",
+            "LOC" | "LOCATION" | "ADDRESS" | "ADDR" => "LOC",
+            "DATE" | "DATETIME" | "TIME" => "DATE",
+            "AGE" => "AGE",
+            _ => return Some(normalized),
+        };
+        Some(category.to_string())
+    }
+
+    fn is_symbolic_placeholder(value: &str) -> bool {
+        let trimmed = value.trim();
+        if trimmed.is_empty() || trimmed.chars().any(char::is_whitespace) {
+            return false;
+        }
+        if !trimmed.chars().any(|c| c.is_ascii_alphabetic()) {
+            return false;
+        }
+        trimmed
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '<' | '>' | ':' | '/'))
+    }
+
+    fn canonical_label(category: Option<&str>, index: usize) -> String {
+        let base = match category {
+            Some("P_NAME") => "P_NAME",
+            Some("S_NAME") => "S_NAME",
+            Some("HOSP") => "HOSP",
+            Some("LOC") => "LOC",
+            Some("DATE") => "DATE",
+            Some("AGE") => "AGE",
+            Some(other) => other,
+            None => "ENTITY",
+        };
+        format!("{}_{:03}", base, index)
+    }
+
     pub fn new(app: &tauri::AppHandle, provider: ModelProvider) -> Result<Self, String> {
         let handler = LlmClient::from_app(app, provider)?;
         Ok(Self { handler })
     }
 
+    fn extract_user_locked_policy(task_input: &str) -> Vec<String> {
+        let start_tag = "[USER_LOCKED_POLICY]";
+        let end_tag = "[/USER_LOCKED_POLICY]";
+        let Some(start) = task_input.find(start_tag) else {
+            return Vec::new();
+        };
+        let Some(end) = task_input.find(end_tag) else {
+            return Vec::new();
+        };
+        if end <= start {
+            return Vec::new();
+        }
+        let body = &task_input[start + start_tag.len()..end];
+        body.lines()
+            .map(|line| line.trim().trim_start_matches("- ").trim().to_string())
+            .filter(|line| !line.is_empty())
+            .collect()
+    }
+
+    fn strip_user_locked_policy(task_input: &str) -> String {
+        let start_tag = "[USER_LOCKED_POLICY]";
+        let end_tag = "[/USER_LOCKED_POLICY]";
+        if let (Some(start), Some(_end)) = (task_input.find(start_tag), task_input.find(end_tag)) {
+            let mut base = task_input[..start].trim().to_string();
+            if base.is_empty() {
+                base = "Medical Case Study".to_string();
+            }
+            return base;
+        }
+        task_input.trim().to_string()
+    }
+
     fn local_fast_strategy(task_name: &str) -> AnonymizationStrategy {
+        let locked_policy = Self::extract_user_locked_policy(task_name);
+        let base_task = Self::strip_user_locked_policy(task_name);
+        let specific_instructions = if locked_policy.is_empty() {
+            "Preserve medical meaning while anonymizing personal information.".to_string()
+        } else {
+            format!(
+                "Preserve medical meaning while anonymizing personal information. \
+Follow USER_LOCKED_POLICY strictly and do not change unspecified rules.\n{}",
+                locked_policy
+                    .iter()
+                    .map(|line| format!("- {}", line))
+                    .collect::<Vec<String>>()
+                    .join("\n")
+            )
+        };
+
         AnonymizationStrategy {
-            task_context: if task_name.trim().is_empty() {
+            task_context: if base_task.trim().is_empty() {
                 "Medical Case Study".to_string()
             } else {
-                task_name.to_string()
+                base_task
             },
             focus_areas: vec![
                 "Patient Names".to_string(),
@@ -71,8 +158,7 @@ impl AgentOrchestrator {
             ],
             date_handling: "relative".to_string(),
             name_handling: "replace_tag".to_string(),
-            specific_instructions:
-                "Preserve medical meaning while anonymizing personal information.".to_string(),
+            specific_instructions,
         }
     }
 
@@ -83,12 +169,10 @@ impl AgentOrchestrator {
     pub async fn plan_strategy_without_text(
         &self,
         task_name: &str,
-        matching_skills: &[&crate::domain::skills::LoadedSkill],
+        _matching_skills: &[&crate::domain::skills::LoadedSkill],
     ) -> Result<AnonymizationStrategy, String> {
-        if self.is_local_gemma() {
-            return Ok(Self::local_fast_strategy(task_name));
-        }
-        self.plan_strategy(task_name, "", matching_skills).await
+        // Unified strategy path for all providers to keep behavior consistent.
+        Ok(Self::local_fast_strategy(task_name))
     }
 
     /// Step 1: Planner Agent
@@ -122,43 +206,7 @@ impl AgentOrchestrator {
         strategy: &AnonymizationStrategy,
         full_text: &str,
     ) -> Result<Vec<ReplacementEntry>, String> {
-        if self.is_local_gemma() {
-            let system_prompt = crate::prompts::strategy_executor_local_fast_prompt(
-                strategy.task_context.as_str(),
-                strategy.date_handling.as_str(),
-                strategy.name_handling.as_str(),
-                strategy.specific_instructions.as_str(),
-            );
-
-            let output = self
-                .handler
-                .generate_structure::<LocalFastExecutorOutput>(
-                    "Extract PHI replacements for anonymization.",
-                    &system_prompt,
-                    Some(full_text),
-                )
-                .await?;
-
-            let mut dedupe = std::collections::HashSet::<(String, String)>::new();
-            let mapped = output
-                .replacements
-                .into_iter()
-                .filter(|r| !r.original.trim().is_empty() && !r.replacement.trim().is_empty())
-                .filter(|r| dedupe.insert((r.original.clone(), r.replacement.clone())))
-                .map(|r| ReplacementEntry {
-                    original: r.original,
-                    replacement: r.replacement,
-                    start: 0,
-                    end: 0,
-                    reason: "PII".to_string(),
-                    category: r.category,
-                })
-                .collect::<Vec<_>>();
-
-            return Ok(mapped);
-        }
-
-        let system_prompt = crate::prompts::strategy_executor_prompt(
+        let system_prompt = crate::prompts::strategy_executor_local_fast_prompt(
             strategy.task_context.as_str(),
             strategy.date_handling.as_str(),
             strategy.name_handling.as_str(),
@@ -167,14 +215,75 @@ impl AgentOrchestrator {
 
         let output = self
             .handler
-            .generate_structure::<ExecutorOutput>(
-                "Please anonymize the following text:",
+            .generate_structure::<LocalFastExecutorOutput>(
+                "Extract PHI replacements for anonymization.",
                 &system_prompt,
                 Some(full_text),
             )
             .await?;
 
-        Ok(output.replacements)
+        let mut indexed = output
+            .replacements
+            .into_iter()
+            .filter_map(|r| {
+                if r.original.trim().is_empty() || r.replacement.trim().is_empty() {
+                    return None;
+                }
+                let start = full_text.find(&r.original)?;
+                let end = start + r.original.len();
+                Some((
+                    start,
+                    end,
+                    r.original,
+                    r.replacement,
+                    Self::normalize_category(r.category.as_deref()),
+                ))
+            })
+            .collect::<Vec<_>>();
+
+        indexed.sort_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then_with(|| b.2.len().cmp(&a.2.len()))
+                .then_with(|| a.2.cmp(&b.2))
+        });
+
+        let mut category_counters: HashMap<String, usize> = HashMap::new();
+        let mut canonical_by_key: HashMap<(String, String), String> = HashMap::new();
+        let mut dedupe: HashSet<(usize, String, String)> = HashSet::new();
+        let mut mapped = Vec::new();
+
+        for (start, end, original, replacement, category) in indexed {
+            let normalized_replacement = if Self::is_symbolic_placeholder(&replacement) {
+                let category_key = category.clone().unwrap_or_else(|| "ENTITY".to_string());
+                let map_key = (category_key.clone(), original.clone());
+                if let Some(existing) = canonical_by_key.get(&map_key) {
+                    existing.clone()
+                } else {
+                    let next = category_counters.entry(category_key).or_insert(0);
+                    *next += 1;
+                    let label = Self::canonical_label(category.as_deref(), *next);
+                    canonical_by_key.insert(map_key, label.clone());
+                    label
+                }
+            } else {
+                replacement
+            };
+
+            if !dedupe.insert((start, original.clone(), normalized_replacement.clone())) {
+                continue;
+            }
+
+            mapped.push(ReplacementEntry {
+                original,
+                replacement: normalized_replacement,
+                start,
+                end,
+                reason: "PII".to_string(),
+                category,
+            });
+        }
+
+        Ok(mapped)
     }
 
     /// Step 3: Reviewer Agent (Optional/Post-processing)
@@ -205,64 +314,16 @@ impl AgentOrchestrator {
             );
         }
 
-        let use_local_fast_path = self.is_local_gemma();
-
-        // 1. Plan (with skill context)
-        let strategy = if use_local_fast_path {
-            let _ = app.emit(
-                "agent-progress",
-                AgentProgressEvent {
-                    step: "Planner".to_string(),
-                    status: "Completed".to_string(),
-                    message: "Local Gemma fast mode: planner step skipped".to_string(),
-                },
-            );
-
-            Self::local_fast_strategy(user_task_input)
-        } else {
-            let _ = app.emit(
-                "agent-progress",
-                AgentProgressEvent {
-                    step: "Planner".to_string(),
-                    status: "In Progress".to_string(),
-                    message: "Analyzing context and designing strategy...".to_string(),
-                },
-            );
-
-            let preview = text.chars().take(1000).collect::<String>();
-            let strategy = self
-                .plan_strategy(user_task_input, &preview, &matching_skills)
-                .await;
-
-            match strategy {
-                Ok(s) => {
-                    let _ = app.emit(
-                        "agent-progress",
-                        AgentProgressEvent {
-                            step: "Planner".to_string(),
-                            status: "Completed".to_string(),
-                            message: format!(
-                                "Strategy defined: {} ({})",
-                                s.task_context,
-                                s.focus_areas.len()
-                            ),
-                        },
-                    );
-                    s
-                }
-                Err(e) => {
-                    let _ = app.emit(
-                        "agent-progress",
-                        AgentProgressEvent {
-                            step: "Planner".to_string(),
-                            status: "Failed".to_string(),
-                            message: format!("Planning failed: {}", e),
-                        },
-                    );
-                    return Err(e);
-                }
-            }
-        };
+        // 1. Plan (unified strategy path for consistent output across providers)
+        let _ = app.emit(
+            "agent-progress",
+            AgentProgressEvent {
+                step: "Planner".to_string(),
+                status: "Completed".to_string(),
+                message: "Unified strategy mode: planner step skipped".to_string(),
+            },
+        );
+        let strategy = Self::local_fast_strategy(user_task_input);
 
         // 2. Execute
         let _ = app.emit(

@@ -5,7 +5,7 @@ use hex;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tauri::State;
 use tauri_plugin_dialog::DialogExt;
 
@@ -22,6 +22,26 @@ fn sha256_hash(content: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(content.as_bytes());
     hex::encode(hasher.finalize())
+}
+
+fn ensure_save_path_allowed(
+    access_control: &AccessControl,
+    save_path: &Path,
+) -> Result<PathBuf, String> {
+    match access_control.ensure_allowed(save_path) {
+        Ok(path) => Ok(path),
+        Err(err) if err.contains("Path is outside the allowed directory") => {
+            let parent = save_path
+                .parent()
+                .ok_or_else(|| "Invalid path: no parent directory".to_string())?;
+            let rebased_dir = parent
+                .canonicalize()
+                .map_err(|e| format!("Invalid save directory: {}", e))?;
+            access_control.set_base_dir(rebased_dir)?;
+            access_control.ensure_allowed(save_path)
+        }
+        Err(err) => Err(err),
+    }
 }
 
 #[tauri::command]
@@ -149,7 +169,7 @@ pub async fn save_anonymized_file(
     let path_buf = path
         .into_path()
         .map_err(|e| format!("Invalid path: {:?}", e))?;
-    let path_buf = access_control.ensure_allowed(&path_buf)?;
+    let path_buf = ensure_save_path_allowed(&access_control, &path_buf)?;
 
     // Save the anonymized content
     fs::write(&path_buf, &content).map_err(|e| format!("Failed to save file: {}", e))?;
@@ -159,7 +179,7 @@ pub async fn save_anonymized_file(
 
     // Generate audit log in the same directory
     let audit_log_path = path_buf.with_extension("audit.json");
-    access_control.ensure_allowed(&audit_log_path)?;
+    ensure_save_path_allowed(&access_control, &audit_log_path)?;
     let timestamp = Local::now().format("%Y-%m-%dT%H:%M:%S%z").to_string();
 
     let audit_log = serde_json::json!({

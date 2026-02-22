@@ -1,5 +1,10 @@
 pub mod anonymizer;
 pub mod audit;
 pub mod batch;
+pub(crate) mod chat_intent;
+pub(crate) mod chat_planning;
+pub(crate) mod chat_state;
+pub(crate) mod chat_types;
+pub mod control;
 pub mod file;
 pub mod settings;

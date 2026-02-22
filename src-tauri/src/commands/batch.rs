@@ -2,6 +2,7 @@ use crate::domain::agent_orchestrator::AgentOrchestrator;
 use crate::domain::model::{AnonPlan, AuditLog};
 use crate::domain::skills::{find_matching_skills, get_skill_names};
 use crate::infrastructure::llm::ModelProvider;
+use crate::state::CancellationState;
 use crate::utils::access_control::AccessControl;
 use crate::utils::file_reader::read_file_with_encoding;
 use crate::utils::path_guard::sanitize_task_name;
@@ -11,11 +12,28 @@ use rayon::prelude::*;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use tauri::Emitter;
 use tauri::State;
+use tauri::{Emitter, Manager};
+
+fn ensure_output_dir_allowed(
+    access_control: &AccessControl,
+    output_dir: &Path,
+) -> Result<PathBuf, String> {
+    match access_control.ensure_allowed(output_dir) {
+        Ok(path) => Ok(path),
+        Err(err) if err.contains("Path is outside the allowed directory") => {
+            let rebased_dir = output_dir
+                .canonicalize()
+                .map_err(|e| format!("Invalid output directory: {}", e))?;
+            access_control.set_base_dir(rebased_dir.clone())?;
+            access_control.ensure_allowed(&rebased_dir)
+        }
+        Err(err) => Err(err),
+    }
+}
 
 #[derive(serde::Serialize)]
 pub struct BatchResult {
@@ -75,7 +93,10 @@ pub struct BulkAnalyzeFailure {
 pub struct BulkAnalyzeResponse {
     pub items: Vec<BulkAnalyzeItem>,
     pub failures: Vec<BulkAnalyzeFailure>,
+    pub cancelled: bool,
 }
+
+const BULK_CANCELLED_MARKER: &str = "__BULK_CANCELLED__";
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -386,8 +407,10 @@ pub async fn bulk_analyze_files(
     target_files: Vec<String>,
     task_context: String,
     provider: ModelProvider,
+    cancellation_state: State<'_, CancellationState>,
     access_control: State<'_, AccessControl>,
 ) -> Result<BulkAnalyzeResponse, String> {
+    cancellation_state.reset_bulk();
     let snapshot = access_control.snapshot()?;
     let mut failures: Vec<BulkAnalyzeFailure> = Vec::new();
     let mut allowed_files: Vec<(String, String, std::path::PathBuf)> = Vec::new();
@@ -429,9 +452,11 @@ pub async fn bulk_analyze_files(
 
     let total = allowed_files.len();
     if total == 0 {
+        cancellation_state.reset_bulk();
         return Ok(BulkAnalyzeResponse {
             items: vec![],
             failures,
+            cancelled: false,
         });
     }
 
@@ -467,6 +492,14 @@ pub async fn bulk_analyze_files(
                 let shared_skill_names = Arc::clone(&shared_skill_names);
 
                 async move {
+                    if app.state::<CancellationState>().is_bulk_cancelled() {
+                        return Err(BulkAnalyzeFailure {
+                            path: path_str,
+                            file_name,
+                            error: BULK_CANCELLED_MARKER.to_string(),
+                        });
+                    }
+
                     let emit_progress = |current_file: &str| {
                         let current = completed_count.fetch_add(1, Ordering::Relaxed) + 1;
                         let _ = app.emit(
@@ -491,6 +524,14 @@ pub async fn bulk_analyze_files(
                         }
                     };
 
+                    if app.state::<CancellationState>().is_bulk_cancelled() {
+                        return Err(BulkAnalyzeFailure {
+                            path: path_str,
+                            file_name,
+                            error: BULK_CANCELLED_MARKER.to_string(),
+                        });
+                    }
+
                     let replacements = match shared_orchestrator
                         .execute_strategy(shared_strategy.as_ref(), &original)
                         .await
@@ -505,6 +546,14 @@ pub async fn bulk_analyze_files(
                             });
                         }
                     };
+
+                    if app.state::<CancellationState>().is_bulk_cancelled() {
+                        return Err(BulkAnalyzeFailure {
+                            path: path_str,
+                            file_name,
+                            error: BULK_CANCELLED_MARKER.to_string(),
+                        });
+                    }
 
                     let plan = AnonPlan {
                         task_name: shared_strategy.task_context.clone(),
@@ -541,14 +590,26 @@ pub async fn bulk_analyze_files(
     .collect::<Vec<Result<BulkAnalyzeItem, BulkAnalyzeFailure>>>()
     .await;
 
+    let mut cancelled = cancellation_state.is_bulk_cancelled();
     for outcome in outcomes {
         match outcome {
             Ok(item) => items.push(item),
-            Err(failure) => failures.push(failure),
+            Err(failure) => {
+                if failure.error == BULK_CANCELLED_MARKER {
+                    cancelled = true;
+                    continue;
+                }
+                failures.push(failure);
+            }
         }
     }
 
-    Ok(BulkAnalyzeResponse { items, failures })
+    cancellation_state.reset_bulk();
+    Ok(BulkAnalyzeResponse {
+        items,
+        failures,
+        cancelled,
+    })
 }
 
 #[tauri::command]
@@ -710,8 +771,7 @@ pub async fn bulk_save(
     items: Vec<BulkSaveItem>,
     access_control: State<'_, AccessControl>,
 ) -> Result<BatchResult, String> {
-    let snapshot = access_control.snapshot()?;
-    let output_path = snapshot.ensure_allowed(Path::new(&output_dir))?;
+    let output_path = ensure_output_dir_allowed(&access_control, Path::new(&output_dir))?;
 
     // Create output directory if it doesn't exist
     fs::create_dir_all(&output_path)
