@@ -44,8 +44,7 @@ AIが自動で個人情報を検出し、適切な形式に置き換えます。
 
 ```bash
 ollama pull gemma3:12b-it-qat
-ollama serve
-```
+OLLAMA_NUM_PARALLEL=2 OLLAMA_KEEP_ALIVE=30m OLLAMA_MAX_LOADED_MODELS=1 ollama serve
 
 ### 3. アプリを起動
 
