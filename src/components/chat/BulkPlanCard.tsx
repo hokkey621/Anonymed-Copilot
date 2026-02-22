@@ -7,15 +7,8 @@ interface BulkExecutionPlan {
   policySummary: string[];
 }
 
-interface WorkflowStep {
-  id: string;
-  label: string;
-  status: 'pending' | 'running' | 'completed' | 'failed';
-}
-
 interface BulkPlanCardProps {
   plan: BulkExecutionPlan;
-  workflowSteps: WorkflowStep[];
   onCommit: () => void;
   isExecuting: boolean;
   progress?: {
@@ -28,6 +21,7 @@ interface BulkPlanCardProps {
 export function BulkPlanCard({ plan, onCommit, isExecuting, progress }: BulkPlanCardProps) {
   const progressPercent = progress ? Math.round((progress.completed / progress.total) * 100) : 0;
   const estimatedSeconds = Math.ceil(plan.estimatedTimeMs / 1000);
+  const normalizedPolicies = (plan.policySummary ?? []).filter((item) => item && item.trim().length > 0);
 
   return (
     <div className="rounded-md border bg-muted/30 text-sm">
@@ -40,6 +34,22 @@ export function BulkPlanCard({ plan, onCommit, isExecuting, progress }: BulkPlan
       </div>
 
       <div className="p-3 space-y-3">
+        {/* Policy summary */}
+        <div className="space-y-1">
+          <div className="text-xs font-medium text-muted-foreground">匿名化ルール</div>
+          {normalizedPolicies.length > 0 ? (
+            <div className="space-y-1">
+              {normalizedPolicies.slice(0, 6).map((line, idx) => (
+                <div key={`${line}-${idx}`} className="text-xs leading-relaxed">
+                  • {line}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-xs text-muted-foreground">ルール要約はありません。</div>
+          )}
+        </div>
+
         {/* Progress Bar (only when executing) */}
         {isExecuting && progress && (
           <div className="space-y-1">
