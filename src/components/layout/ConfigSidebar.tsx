@@ -10,6 +10,15 @@ import { AgentProgressEvent } from "./ProgressIndicator";
 import { Send, FileText, Loader2, Sparkles, Plus, Square } from "lucide-react";
 
 export type ModelProvider = "gemini" | "local_gemma";
+type ChatPhase =
+  | "discovery"
+  | "help"
+  | "purpose_selection"
+  | "plan_presented"
+  | "execution_ready"
+  | "revision"
+  | "troubleshoot"
+  | "off_topic";
 
 interface Message {
   role: "user" | "assistant";
@@ -26,6 +35,7 @@ interface ChatThread {
   updatedAt: number;
   messages: Message[];
   activeSkills: string[];
+  chatPhase: ChatPhase;
 }
 
 interface BulkExecutionPlan {
@@ -54,6 +64,8 @@ interface AgentChatResponse {
   bulkPlan: BulkExecutionPlan | null;
   workflowSteps: WorkflowStep[] | null;
   suggestions: string[] | null;
+  nextState: ChatPhase;
+  stateReason: string;
   appliedSkills?: string[] | null;
 }
 
@@ -62,6 +74,8 @@ interface ConfigSidebarProps {
   isProcessing: boolean;
   selectedProvider: ModelProvider;
   onProviderChange: (provider: ModelProvider) => void;
+  onOpenFile?: () => Promise<void> | void;
+  onOpenFolder?: () => Promise<void> | void;
   currentContent: string;
   fileCount?: number;
   currentDirPath?: string;
@@ -109,6 +123,8 @@ export function ConfigSidebar({
   isProcessing,
   selectedProvider,
   onProviderChange,
+  onOpenFile,
+  onOpenFolder,
   currentContent,
   fileCount = 0,
   currentDirPath = "",
@@ -142,6 +158,7 @@ export function ConfigSidebar({
       updatedAt: now,
       messages: [INITIAL_ASSISTANT_MESSAGE],
       activeSkills: [],
+      chatPhase: "discovery",
     };
   };
 
@@ -154,14 +171,15 @@ export function ConfigSidebar({
   const [taskContext, setTaskContext] = useState("Medical Case Study");
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{ completed: number; total: number; currentFile?: string } | null>(null);
-  const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([]);
   const [isBulkExecuting, setIsBulkExecuting] = useState(false);
   const [activeBulkPlan, setActiveBulkPlan] = useState<BulkExecutionPlan | null>(null);
   const [streamingContent, setStreamingContent] = useState<string>("");
   const [thinkingPhase, setThinkingPhase] = useState<string>("");
   const [isApproving, setIsApproving] = useState(false);
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
+  const [chatPhase, setChatPhase] = useState<ChatPhase>("discovery");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const streamEndReasonRef = useRef<"completed" | "cancelled" | null>(null);
 
   const sortedThreads = [...threads].sort((a, b) => b.updatedAt - a.updatedAt);
   const canStop = isChatLoading || !!bulkAnalysisProgress?.isAnalyzing;
@@ -180,10 +198,16 @@ export function ConfigSidebar({
     localStorage.setItem(CHAT_THREADS_STORAGE_KEY, JSON.stringify(payload));
   };
 
-  const replaceActiveThread = (nextMessages: Message[], nextSkills?: string[]) => {
+  const replaceActiveThread = (
+    nextMessages: Message[],
+    nextSkills?: string[],
+    nextPhase?: ChatPhase,
+  ) => {
     const skills = nextSkills ?? activeSkills;
+    const phase = nextPhase ?? chatPhase;
     setMessages(nextMessages);
     setActiveSkills(skills);
+    setChatPhase(phase);
     setThreads((prev) => {
       const updated = prev
         .map((thread) => {
@@ -192,6 +216,7 @@ export function ConfigSidebar({
             ...thread,
             messages: nextMessages,
             activeSkills: skills,
+            chatPhase: phase,
             updatedAt: Date.now(),
             title: deriveThreadTitle(nextMessages, thread.title),
           };
@@ -220,21 +245,42 @@ export function ConfigSidebar({
     // Remove confusing file-upload prompts from assistant responses
     cleaned = cleaned
       .split("\n")
-      .filter(line => !/ファイル.*(アップロード|開い).*ください/.test(line))
+      .filter(line => !/^\s*ファイル.*(アップロード|開い).*ください[。.!！]?\s*$/.test(line))
       .join("\n");
 
     return cleaned.trim();
+  };
+
+  const buildFallbackResponse = (userInput: string): string => {
+    const normalized = userInput.trim();
+    const hasFileContext = !!currentContent || selectedFilePaths.length > 0 || fileCount > 0;
+    const hasAnonymizationIntent =
+      /匿名化|実行|プラン|計画|個人情報|マスク|伏せ字/i.test(normalized);
+
+    if (/使い方|ヘルプ|help/i.test(normalized)) {
+      return "使い方の概要:\n1. 左上のメニューからファイルを開く\n2. 右のチャットで「匿名化プランを作成」と入力\n3. 変更内容を確認して保存";
+    }
+
+    if (!hasFileContext) {
+      return "まず左上の「File」から匿名化したいファイルを開いてください。開いたら「匿名化プランを作成」と送ってください。";
+    }
+
+    if (hasAnonymizationIntent) {
+      return "匿名化の利用目的を教えてください（例: ワクチン研究、教材作成、標準）。";
+    }
+
+    return "続けて具体的に指定してください。例: 「匿名化プランを作成」「変更点を確認」";
   };
 
   const resolveResponseContent = (raw: string, userInput: string): string => {
     const cleaned = filterThoughtTags(raw);
     if (cleaned) return cleaned;
 
-    if (/使い方|ヘルプ|help/i.test(userInput)) {
-      return "使い方の概要:\n1. 左上のメニューからファイルを開く\n2. 右のチャットで「匿名化を実行」など指示\n3. 変更内容を確認して保存";
+    if (streamEndReasonRef.current === "cancelled") {
+      return "処理を停止しました。必要であれば指示を短くして再実行してください。";
     }
 
-    return "すみません、もう一度質問を言い換えてもらえますか？";
+    return buildFallbackResponse(userInput);
   };
 
   const buildApiMessages = (history: Message[]) => {
@@ -259,12 +305,16 @@ export function ConfigSidebar({
     return raw;
   };
 
+  const showErrorPopup = (message: string) => {
+    alert(message);
+  };
+
   // Keywords that indicate file content should be sent to the LLM
   const FILE_CONTENT_KEYWORDS = [
     "計画を立てて", "一括", "全件", "全て", "すべて",
     // スキル関連のキーワードでもファイルコンテンツを渡す
     "ワクチン", "vaccine", "教材", "教育", "症例", "研究", "開発用", "作成用",
-    "学会", "論文", "匿名化プラン", "確認", "変更"
+    "学会", "論文", "匿名化プラン", "確認", "変更", "修正", "調整", "再実行"
   ];
 
   // Helper to check if a message needs file content
@@ -278,13 +328,20 @@ export function ConfigSidebar({
       if (raw) {
         const parsed = JSON.parse(raw) as PersistedChatThreads;
         if (Array.isArray(parsed.threads) && parsed.threads.length > 0) {
-          const initialActiveId = parsed.activeThreadId || parsed.threads[0].id;
+          const hydratedThreads = parsed.threads
+            .slice(0, MAX_CHAT_THREADS)
+            .map((thread) => ({
+              ...thread,
+              chatPhase: (thread.chatPhase ?? "discovery") as ChatPhase,
+            }));
+          const initialActiveId = parsed.activeThreadId || hydratedThreads[0].id;
           const initialThread =
-            parsed.threads.find((t) => t.id === initialActiveId) ?? parsed.threads[0];
-          setThreads(parsed.threads.slice(0, MAX_CHAT_THREADS));
+            hydratedThreads.find((t) => t.id === initialActiveId) ?? hydratedThreads[0];
+          setThreads(hydratedThreads);
           setActiveThreadId(initialThread.id);
           setMessages(initialThread.messages.length > 0 ? initialThread.messages : [INITIAL_ASSISTANT_MESSAGE]);
           setActiveSkills(initialThread.activeSkills ?? []);
+          setChatPhase(initialThread.chatPhase ?? "discovery");
           return;
         }
       }
@@ -297,6 +354,7 @@ export function ConfigSidebar({
     setActiveThreadId(thread.id);
     setMessages(thread.messages);
     setActiveSkills(thread.activeSkills);
+    setChatPhase("discovery");
     persistThreads([thread], thread.id);
   }, []);
 
@@ -310,10 +368,19 @@ export function ConfigSidebar({
 
   const shouldRunAnonymizationDirectly = (text: string): boolean => {
     const normalized = text.replace(/\s+/g, "");
-    return (
-      normalized === "実行" ||
-      normalized === "匿名化実行"
-    );
+    const hasExecutablePlan =
+      !!activeBulkPlan || ((currentPlan?.replacements?.length ?? 0) > 0);
+    const directCommands = new Set([
+      "実行",
+      "匿名化実行",
+      "処理を開始",
+      "再実行",
+      "修正して再実行",
+    ]);
+    if (normalized === "この内容で実行") {
+      return hasExecutablePlan;
+    }
+    return directCommands.has(normalized) || normalized.endsWith("を実行");
   };
 
   // Listen for agent progress (including skill matching)
@@ -341,9 +408,6 @@ export function ConfigSidebar({
     const unlisten = listen<BulkProgressEvent>("bulk-progress", (event) => {
       const { completed, total, currentFile, stepId, stepStatus } = event.payload;
       setBulkProgress({ completed, total, currentFile });
-      setWorkflowSteps(prev => prev.map(step =>
-        step.id === stepId ? { ...step, status: stepStatus as WorkflowStep['status'] } : step
-      ));
       if (stepId === "audit" && stepStatus === "completed") {
         setIsBulkExecuting(false);
       }
@@ -363,7 +427,7 @@ export function ConfigSidebar({
       // Trim leading/trailing whitespace
       cleaned = cleaned
         .split("\n")
-        .filter(line => !/ファイル.*(アップロード|開い).*ください/.test(line))
+        .filter(line => !/^\s*ファイル.*(アップロード|開い).*ください[。.!！]?\s*$/.test(line))
         .join("\n")
         .trim();
       setStreamingContent(cleaned);
@@ -373,6 +437,8 @@ export function ConfigSidebar({
 
   useEffect(() => {
     const unlistenEnd = listen<{ full: string; reason?: string }>("chat-stream-end", (event) => {
+      streamEndReasonRef.current =
+        event.payload.reason === "cancelled" ? "cancelled" : "completed";
       if (event.payload.reason === "cancelled") {
         setThinkingPhase("停止しました");
       }
@@ -406,6 +472,7 @@ export function ConfigSidebar({
     setActiveThreadId(thread.id);
     setMessages(thread.messages);
     setActiveSkills([]);
+    setChatPhase("discovery");
     setStreamingContent("");
     setThinkingPhase("");
   };
@@ -417,6 +484,7 @@ export function ConfigSidebar({
     setActiveThreadId(thread.id);
     setMessages(thread.messages);
     setActiveSkills(thread.activeSkills ?? []);
+    setChatPhase(thread.chatPhase ?? "discovery");
     setStreamingContent("");
     setThinkingPhase("");
   };
@@ -445,6 +513,72 @@ export function ConfigSidebar({
     const history = [...messages, userMsg];
     replaceActiveThread(history);
     setInputInfo("");
+
+    const normalized = text.replace(/\s+/g, "");
+    if (normalized === "ファイルを開く" || normalized === "フォルダを開く") {
+      try {
+        if (normalized === "ファイルを開く") {
+          await onOpenFile?.();
+          replaceActiveThread([
+            ...history,
+            {
+              role: "assistant",
+              content: "ファイル選択ダイアログを開きました。ファイルを開いたら「匿名化プランを作成」と入力してください。",
+              suggestions: ["匿名化プランを作成", "標準ルールで作成", "使い方を教えて"],
+            },
+          ]);
+        } else {
+          await onOpenFolder?.();
+          replaceActiveThread([
+            ...history,
+            {
+              role: "assistant",
+              content: "フォルダ選択ダイアログを開きました。対象を選んだら「匿名化プランを作成」と入力してください。",
+              suggestions: ["匿名化プランを作成", "処理対象を確認", "使い方を教えて"],
+            },
+          ]);
+        }
+      } catch (e) {
+        showErrorPopup(formatCommandError(e));
+        replaceActiveThread([
+          ...history,
+          { role: "assistant", content: `エラー: ${formatCommandError(e)}` },
+        ]);
+      }
+      return;
+    }
+
+    if (normalized === "処理対象を確認" || normalized === "選択ファイルを確認") {
+      const namesFromPath = (paths: string[]) =>
+        paths.map((p) => p.split(/[\\/]/).pop() || p).filter(Boolean);
+      const selectedNames = namesFromPath(selectedFilePaths);
+      let targetSummary = "";
+
+      if (selectedNames.length > 0) {
+        const preview = selectedNames.slice(0, 5).join("、");
+        const rest = selectedNames.length > 5 ? ` ほか${selectedNames.length - 5}件` : "";
+        targetSummary = `現在の処理対象は ${selectedNames.length} 件です。\n${preview}${rest}`;
+      } else if (currentFileName) {
+        targetSummary = `現在の処理対象は 1 件です。\n${currentFileName}`;
+      } else if (fileCount > 0) {
+        targetSummary = `現在の処理対象は ${fileCount} 件です。`;
+      } else {
+        targetSummary = "現在、処理対象のファイルはありません。先にファイルまたはフォルダを開いてください。";
+      }
+
+      replaceActiveThread([
+        ...history,
+        {
+          role: "assistant",
+          content: targetSummary,
+          suggestions:
+            fileCount > 0
+              ? ["匿名化プランを作成", "標準ルールで作成", "使い方を教えて"]
+              : ["ファイルを開く", "フォルダを開く", "使い方を教えて"],
+        },
+      ]);
+      return;
+    }
 
     if (shouldRunAnonymizationDirectly(text)) {
       if (currentDirPath && onStartBulkReview && selectedFilePaths.length > 0) {
@@ -475,8 +609,8 @@ export function ConfigSidebar({
     setIsChatLoading(true);
     const needsFileContent = checkNeedsFileContent(text);
     const apiMessages = buildApiMessages(history);
-
     try {
+      streamEndReasonRef.current = null;
       setStreamingContent("");
 
       const response = await invoke<AgentChatResponse>("agent_chat_streaming", {
@@ -484,7 +618,10 @@ export function ConfigSidebar({
         fileCount: fileCount,
         editorContent: needsFileContent ? (currentContent || null) : null,
         provider: selectedProvider,
+        chatPhase,
       });
+
+      const nextPhase: ChatPhase = response.nextState ?? chatPhase;
 
       const assistantMessage: Message = {
         role: "assistant",
@@ -494,11 +631,14 @@ export function ConfigSidebar({
         suggestions: response.suggestions || undefined,
       };
 
-      replaceActiveThread([...history, assistantMessage], response.appliedSkills ?? []);
+      replaceActiveThread(
+        [...history, assistantMessage],
+        response.appliedSkills ?? [],
+        nextPhase,
+      );
 
-      if (response.bulkPlan && response.workflowSteps) {
+      if (response.bulkPlan) {
         setActiveBulkPlan(response.bulkPlan);
-        setWorkflowSteps(response.workflowSteps);
       }
 
       const lowerInput = text.toLowerCase();
@@ -509,7 +649,9 @@ export function ConfigSidebar({
       }
     } catch (e) {
       console.error("Chat error:", e);
-      replaceActiveThread([...history, { role: "assistant", content: `エラー: ${formatCommandError(e)}` }]);
+      const message = formatCommandError(e);
+      showErrorPopup(message);
+      replaceActiveThread([...history, { role: "assistant", content: `エラー: ${message}` }]);
     } finally {
       setIsChatLoading(false);
       setStreamingContent("");
@@ -556,6 +698,7 @@ export function ConfigSidebar({
         }]);
       }
     } catch (e) {
+      showErrorPopup(String(e));
       replaceActiveThread([...messages, { role: "assistant", content: `❌ エラー: ${e}` }]);
     } finally {
       setIsBulkExecuting(false);
@@ -613,11 +756,10 @@ export function ConfigSidebar({
           {messages.map((m, i) => (
             <div key={i}>
               <ChatMessage role={m.role} content={m.content} />
-              {m.bulkPlan && m.workflowSteps && (
+              {m.bulkPlan && (
                 <div className="mt-2">
                   <BulkPlanCard
                     plan={m.bulkPlan}
-                    workflowSteps={workflowSteps.length > 0 ? workflowSteps : m.workflowSteps}
                     onCommit={handleBulkCommit}
                     isExecuting={isBulkExecuting || isProcessing}
                     progress={bulkProgress || undefined}

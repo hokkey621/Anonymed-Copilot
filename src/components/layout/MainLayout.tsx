@@ -371,6 +371,7 @@ export function MainLayout() {
     } catch (e) {
         console.error("[UI] Anonymization failed:", e);
         const message = formatError(e);
+        alert(message);
         if (message.includes("APIキー")) {
           setShowApiKeyModal(true);
         }
@@ -753,10 +754,20 @@ export function MainLayout() {
                 onProviderChange={handleProviderChange}
                 currentContent={originalContent}
                 currentPlan={currentPlan}
-                fileCount={selectedFilesForBulk.size > 0 ? selectedFilesForBulk.size : folderFiles.filter(f => !f.isDir).length}
+                fileCount={
+                  selectedFilesForBulk.size > 0
+                    ? selectedFilesForBulk.size
+                    : currentFolder
+                      ? folderFiles.filter(f => !f.isDir).length
+                      : openedFiles.length > 0
+                        ? 1
+                        : 0
+                }
                 currentFileName={activeFile?.filename}
                 currentDirPath={currentFolder?.path}
                 selectedFilePaths={Array.from(selectedFilesForBulk)}
+                onOpenFile={handleOpenFile}
+                onOpenFolder={handleOpenFolder}
                 onStartBulkReview={handleStartBulkReview}
                 bulkReviewMode={bulkReviewMode}
                 bulkReviewProgress={bulkReviewMode ? { current: bulkReviewIndex + 1, total: bulkReviewQueue.length, fileName: bulkReviewQueue[bulkReviewIndex]?.fileName || "" } : undefined}
