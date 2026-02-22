@@ -3,7 +3,8 @@ import { createDefaultPlan } from "@/domain/utils";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useState, useEffect } from "react";
-import { ConfigSidebar, ModelProvider } from "./ConfigSidebar";
+import { ConfigSidebar } from "./ConfigSidebar";
+import type { ModelProvider } from "./chat/types";
 import { EditorPanel } from "./EditorPanel";
 import { FileExplorer, OpenedFile } from "./FileExplorer";
 import { MenuBar } from "./MenuBar";
@@ -469,8 +470,16 @@ export function MainLayout() {
           alert("解析を停止しました。");
           return;
         }
-        console.error("[Bulk Review] No files were successfully analyzed!");
-        alert("エラー: ファイルの分析に失敗しました。コンソールログを確認してください。");
+        console.error("[Bulk Review] No files were successfully analyzed!", analysisFailures);
+        if (analysisFailures.length > 0) {
+          alert(
+            `すべてのファイル解析に失敗しました:\n${analysisFailures
+              .map(f => `- ${f.fileName}: ${f.error}`)
+              .join("\n")}`
+          );
+        } else {
+          alert("エラー: ファイルの分析に失敗しました。コンソールログを確認してください。");
+        }
         return;
       }
 
