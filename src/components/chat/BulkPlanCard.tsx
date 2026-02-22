@@ -1,11 +1,6 @@
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-
-interface BulkExecutionPlan {
-  targetCount: number;
-  estimatedTimeMs: number;
-  policySummary: string[];
-}
+import type { BulkExecutionPlan } from '@/components/layout/chat/types';
 
 interface BulkPlanCardProps {
   plan: BulkExecutionPlan;

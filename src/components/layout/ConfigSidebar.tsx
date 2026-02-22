@@ -8,66 +8,35 @@ import { BulkPlanCard } from "@/components/chat/BulkPlanCard";
 import { SuggestionChips } from "@/components/chat/SuggestionChips";
 import { AgentProgressEvent } from "./ProgressIndicator";
 import { Send, FileText, Loader2, Sparkles, Plus, Square } from "lucide-react";
+import {
+  INITIAL_ASSISTANT_MESSAGE,
+  MAX_CHAT_THREADS,
+  MODEL_OPTIONS,
+  PLAN_FLOW_PHASES,
+} from "./chat/constants";
+import {
+  applyPartialPlanEdit,
+  buildExecutionTaskContext,
+  checkNeedsFileContent,
+  filterThoughtTags,
+  formatCommandError,
+  isPartialPlanEditIntent,
+  namesFromPath,
+  resolveResponseContent,
+  shouldRunAnonymizationDirectly,
+} from "./chat/chatLogic";
+import { clampThreads, createThread, deriveThreadTitle, loadThreads, persistThreads } from "./chat/threadStore";
+import type {
+  AgentChatResponse,
+  BulkExecutionPlan,
+  BulkProgressEvent,
+  ChatPhase,
+  ChatThread,
+  Message,
+  ModelProvider,
+} from "./chat/types";
 
-export type ModelProvider = "gemini" | "local_gemma";
-type ChatPhase =
-  | "discovery"
-  | "help"
-  | "purpose_selection"
-  | "plan_presented"
-  | "execution_ready"
-  | "revision"
-  | "troubleshoot"
-  | "off_topic";
-
-interface Message {
-  role: "user" | "assistant";
-  content: string;
-  bulkPlan?: BulkExecutionPlan;
-  workflowSteps?: WorkflowStep[];
-  suggestions?: string[];
-}
-
-interface ChatThread {
-  id: string;
-  title: string;
-  createdAt: number;
-  updatedAt: number;
-  messages: Message[];
-  activeSkills: string[];
-  chatPhase: ChatPhase;
-}
-
-interface BulkExecutionPlan {
-  targetCount: number;
-  estimatedTimeMs: number;
-  policySummary: string[];
-}
-
-interface WorkflowStep {
-  id: string;
-  label: string;
-  status: "pending" | "running" | "completed" | "failed";
-}
-
-interface BulkProgressEvent {
-  completed: number;
-  total: number;
-  currentFile: string;
-  stepId: string;
-  stepStatus: string;
-  stepMessage: string;
-}
-
-interface AgentChatResponse {
-  message: string;
-  bulkPlan: BulkExecutionPlan | null;
-  workflowSteps: WorkflowStep[] | null;
-  suggestions: string[] | null;
-  nextState: ChatPhase;
-  stateReason: string;
-  appliedSkills?: string[] | null;
-}
+export type { ModelProvider } from "./chat/types";
 
 interface ConfigSidebarProps {
   onRunAnonymization: (task: string) => void;
@@ -98,28 +67,6 @@ interface ConfigSidebarProps {
   onStopOperations?: () => Promise<void> | void;
 }
 
-interface PersistedChatThreads {
-  activeThreadId: string;
-  threads: ChatThread[];
-}
-
-const MODEL_OPTIONS: { value: ModelProvider; label: string }[] = [
-  { value: "gemini", label: "Gemini" },
-  { value: "local_gemma", label: "Local Gemma (Ollama)" },
-];
-
-const CHAT_THREADS_STORAGE_KEY = "anonymed-copilot-chat-threads-v1";
-const MAX_CHAT_THREADS = 30;
-const DEFAULT_THREAD_TITLE = "新しいチャット";
-
-const INITIAL_ASSISTANT_MESSAGE: Message = {
-  role: "assistant",
-  content: "こんにちは。ユーザーテストへのご協力ありがとうございます！\n\nまずは左上の「File」>「ファイルを開く」から、匿名化したいカルテや資料（テキストファイル）を開いてください。\n\n個人情報は自動的に検出・匿名化されます。",
-  suggestions: ["匿名化を実行して", "使い方を教えて"],
-};
-
-const PLAN_FLOW_PHASES: ChatPhase[] = ["plan_presented", "execution_ready", "revision"];
-
 export function ConfigSidebar({
   onRunAnonymization,
   isProcessing,
@@ -147,23 +94,6 @@ export function ConfigSidebar({
   fileStatuses = [],
   onStopOperations,
 }: ConfigSidebarProps) {
-  const createThread = (title = DEFAULT_THREAD_TITLE): ChatThread => {
-    const now = Date.now();
-    const id =
-      typeof crypto !== "undefined" && crypto.randomUUID
-        ? crypto.randomUUID()
-        : `${now}-${Math.random().toString(36).slice(2)}`;
-    return {
-      id,
-      title,
-      createdAt: now,
-      updatedAt: now,
-      messages: [INITIAL_ASSISTANT_MESSAGE],
-      activeSkills: [],
-      chatPhase: "discovery",
-    };
-  };
-
   const [messages, setMessages] = useState<Message[]>([INITIAL_ASSISTANT_MESSAGE]);
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string>("");
@@ -185,20 +115,6 @@ export function ConfigSidebar({
 
   const sortedThreads = [...threads].sort((a, b) => b.updatedAt - a.updatedAt);
   const canStop = isChatLoading || !!bulkAnalysisProgress?.isAnalyzing;
-
-  const deriveThreadTitle = (threadMessages: Message[], fallback: string): string => {
-    const firstUser = threadMessages.find((m) => m.role === "user")?.content.trim();
-    if (!firstUser) return fallback;
-    return firstUser.length > 24 ? `${firstUser.slice(0, 24)}...` : firstUser;
-  };
-
-  const persistThreads = (nextThreads: ChatThread[], nextActiveThreadId: string) => {
-    const payload: PersistedChatThreads = {
-      activeThreadId: nextActiveThreadId,
-      threads: nextThreads,
-    };
-    localStorage.setItem(CHAT_THREADS_STORAGE_KEY, JSON.stringify(payload));
-  };
 
   const replaceActiveThread = (
     nextMessages: Message[],
@@ -229,62 +145,6 @@ export function ConfigSidebar({
     });
   };
 
-  // Helper function to filter out thought tags from AI responses
-  const filterThoughtTags = (text: string): string => {
-    let cleaned = text;
-    // Remove [System]: ... patterns (LLM sometimes echoes system prompt)
-    cleaned = cleaned.replace(/\[System\]:?[\s\S]*?(?=\n\n|\n[ぁ-んァ-ン一-龯]|$)/gi, '');
-    // Remove [THOUGHT]: ... patterns
-    cleaned = cleaned.replace(/\[THOUGHT\]:?[\s\S]*?(?=\n\n|\n[A-Zぁ-んァ-ン一-龯]|$)/gi, '');
-    // Remove [thinking]...[/thinking] blocks
-    cleaned = cleaned.replace(/\[thinking\][\s\S]*?\[\/thinking\]\s*/gi, '');
-
-    // Aggressive filter: If [/THOUGHT] exists, assume everything before it is internal thought
-    if (cleaned.includes("[/THOUGHT]")) {
-      cleaned = cleaned.replace(/[\s\S]*?\[\/THOUGHT\]\s*/i, '');
-    }
-
-    // Remove confusing file-upload prompts from assistant responses
-    cleaned = cleaned
-      .split("\n")
-      .filter(line => !/^\s*ファイル.*(アップロード|開い).*ください[。.!！]?\s*$/.test(line))
-      .join("\n");
-
-    return cleaned.trim();
-  };
-
-  const buildFallbackResponse = (userInput: string): string => {
-    const normalized = userInput.trim();
-    const hasFileContext = !!currentContent || selectedFilePaths.length > 0 || fileCount > 0;
-    const hasAnonymizationIntent =
-      /匿名化|実行|プラン|計画|個人情報|マスク|伏せ字/i.test(normalized);
-
-    if (/使い方|ヘルプ|help/i.test(normalized)) {
-      return "使い方の概要:\n1. 左上のメニューからファイルを開く\n2. 右のチャットで「匿名化プランを作成」と入力\n3. 変更内容を確認して保存";
-    }
-
-    if (!hasFileContext) {
-      return "まず左上の「File」から匿名化したいファイルを開いてください。開いたら「匿名化プランを作成」と送ってください。";
-    }
-
-    if (hasAnonymizationIntent) {
-      return "匿名化の利用目的を教えてください（例: ワクチン研究、教材作成、標準）。";
-    }
-
-    return "続けて具体的に指定してください。例: 「匿名化プランを作成」「変更点を確認」";
-  };
-
-  const resolveResponseContent = (raw: string, userInput: string): string => {
-    const cleaned = filterThoughtTags(raw);
-    if (cleaned) return cleaned;
-
-    if (streamEndReasonRef.current === "cancelled") {
-      return "処理を停止しました。必要であれば指示を短くして再実行してください。";
-    }
-
-    return buildFallbackResponse(userInput);
-  };
-
   const buildApiMessages = (history: Message[]) => {
     // The first assistant greeting is UI guidance and should not bias the model conversation.
     const cleaned = history.filter((m, i) => !(i === 0 && m.role === "assistant"));
@@ -293,65 +153,32 @@ export function ConfigSidebar({
       .map(m => ({ role: m.role, content: m.content }));
   };
 
-  const formatCommandError = (error: unknown): string => {
-    const raw = String(error ?? "");
-    if (raw.includes("GEMINI_API_KEY_MISSING")) {
-      return "Gemini の APIキーが未設定です。Settings から APIキーを設定してから再実行してください。";
-    }
-    if (raw.includes("OLLAMA_CONNECTION_ERROR")) {
-      return "Ollama に接続できません。`ollama serve` を起動してから再実行してください。";
-    }
-    if (raw.includes("OLLAMA_STREAM_ERROR") && raw.includes("timed out")) {
-      return "Local Gemma の応答がタイムアウトしました。短い指示にするか、再実行してください。";
-    }
-    return raw;
-  };
-
   const showErrorPopup = (message: string) => {
     alert(message);
   };
 
-  // Keywords that indicate file content should be sent to the LLM
-  const FILE_CONTENT_KEYWORDS = [
-    "計画を立てて", "一括", "全件", "全て", "すべて",
-    // スキル関連のキーワードでもファイルコンテンツを渡す
-    "ワクチン", "vaccine", "教材", "教育", "症例", "研究", "開発用", "作成用",
-    "学会", "論文", "匿名化プラン", "確認", "変更", "修正", "調整", "再実行"
-  ];
-
-  // Helper to check if a message needs file content
-  const checkNeedsFileContent = (text: string): boolean => {
-    return FILE_CONTENT_KEYWORDS.some(kw => text.includes(kw));
-  };
-
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(CHAT_THREADS_STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as PersistedChatThreads;
-        if (Array.isArray(parsed.threads) && parsed.threads.length > 0) {
-          const hydratedThreads = parsed.threads
-            .slice(0, MAX_CHAT_THREADS)
-            .map((thread) => ({
-              ...thread,
-              chatPhase: (thread.chatPhase ?? "discovery") as ChatPhase,
-            }));
+      const parsed = loadThreads();
+      if (parsed && Array.isArray(parsed.threads) && parsed.threads.length > 0) {
+          const hydratedThreads = clampThreads(parsed.threads).map((thread) => ({
+            ...thread,
+            chatPhase: (thread.chatPhase ?? "discovery") as ChatPhase,
+          }));
           const initialActiveId = parsed.activeThreadId || hydratedThreads[0].id;
-          const initialThread =
-            hydratedThreads.find((t) => t.id === initialActiveId) ?? hydratedThreads[0];
+          const initialThread = hydratedThreads.find((t) => t.id === initialActiveId) ?? hydratedThreads[0];
           setThreads(hydratedThreads);
           setActiveThreadId(initialThread.id);
           setMessages(initialThread.messages.length > 0 ? initialThread.messages : [INITIAL_ASSISTANT_MESSAGE]);
           setActiveSkills(initialThread.activeSkills ?? []);
           setChatPhase(initialThread.chatPhase ?? "discovery");
           return;
-        }
       }
     } catch (e) {
       console.warn("Failed to load chat history:", e);
     }
 
-    const thread = createThread();
+    const thread = createThread(INITIAL_ASSISTANT_MESSAGE);
     setThreads([thread]);
     setActiveThreadId(thread.id);
     setMessages(thread.messages);
@@ -362,122 +189,11 @@ export function ConfigSidebar({
 
   useEffect(() => {
     if (threads.length === 0 || !activeThreadId) return;
-    persistThreads(threads.slice(0, MAX_CHAT_THREADS), activeThreadId);
+    persistThreads(clampThreads(threads), activeThreadId);
   }, [threads, activeThreadId]);
 
   const allReviewed = bulkReviewMode && fileStatuses.length > 0 && fileStatuses.every(f => f.status !== 'pending');
   const approvedCount = fileStatuses.filter(f => f.status === 'approved').length;
-
-  const shouldRunAnonymizationDirectly = (text: string): boolean => {
-    const normalized = text.replace(/\s+/g, "");
-    const hasExecutablePlan =
-      !!activeBulkPlan || ((currentPlan?.replacements?.length ?? 0) > 0);
-    const directCommands = new Set([
-      "実行",
-      "匿名化実行",
-      "処理を開始",
-      "再実行",
-      "修正して再実行",
-    ]);
-    if (normalized === "この内容で実行") {
-      return hasExecutablePlan;
-    }
-    return directCommands.has(normalized) || normalized.endsWith("を実行");
-  };
-
-  const buildExecutionTaskContext = (): string => {
-    if (!activeBulkPlan || !activeBulkPlan.policySummary || activeBulkPlan.policySummary.length === 0) {
-      return taskContext;
-    }
-    const policyLines = activeBulkPlan.policySummary
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-      .map((line) => `- ${line}`)
-      .join("\n");
-    return `${taskContext}\n\n[USER_LOCKED_POLICY]\n${policyLines}\n[/USER_LOCKED_POLICY]`;
-  };
-
-  const isPartialPlanEditIntent = (text: string): boolean => {
-    return /年齢|日付|氏名|名前|住所|地名|病名|疾患|ルール|だけ|のみ|部分/i.test(text);
-  };
-
-  const updateRuleLine = (
-    lines: string[],
-    keyword: string,
-    nextLine: string,
-  ): { next: string[]; changed: boolean } => {
-    const index = lines.findIndex((line) => line.includes(keyword));
-    if (index >= 0) {
-      if (lines[index] === nextLine) return { next: lines, changed: false };
-      const next = [...lines];
-      next[index] = nextLine;
-      return { next, changed: true };
-    }
-    return { next: [...lines, nextLine], changed: true };
-  };
-
-  const applyPartialPlanEdit = (
-    plan: BulkExecutionPlan,
-    text: string,
-  ): { plan: BulkExecutionPlan; changedRules: string[] } => {
-    let summary = [...(plan.policySummary || [])];
-    const changedRules: string[] = [];
-
-    if (/年齢/i.test(text)) {
-      const next = /五歳|5歳|5 歳|5才|５歳/.test(text)
-        ? "年齢 → 5歳刻みへ一般化"
-        : "年齢 → 年代へ一般化";
-      const res = updateRuleLine(summary, "年齢", next);
-      summary = res.next;
-      if (res.changed) changedRules.push("年齢");
-    }
-
-    if (/日付/i.test(text)) {
-      const next = /年月|月単位/.test(text)
-        ? "日付 → 年月のみへ一般化"
-        : /相対|経過/.test(text)
-          ? "日付 → 相対日付へ置換"
-          : "日付 → 月単位へ一般化";
-      const res = updateRuleLine(summary, "日付", next);
-      summary = res.next;
-      if (res.changed) changedRules.push("日付");
-    }
-
-    if (/氏名|名前/i.test(text)) {
-      const next = /仮名|疑似|置換/.test(text)
-        ? "氏名 → 仮名へ置換"
-        : "氏名 → 完全削除";
-      const res = updateRuleLine(summary, "氏名", next);
-      summary = res.next;
-      if (res.changed) changedRules.push("氏名");
-    }
-
-    if (/住所|地名|地域/i.test(text)) {
-      const next = /都道府県/.test(text)
-        ? "住所 → 都道府県レベルへ一般化"
-        : "住所 → 広域へ一般化";
-      const res = updateRuleLine(summary, "住所", next);
-      summary = res.next;
-      if (res.changed) changedRules.push("住所");
-    }
-
-    if (/病名|疾患/i.test(text)) {
-      const next = /そのまま|保持/.test(text)
-        ? "病名 → そのまま保持"
-        : "病名 → 一般化";
-      const res = updateRuleLine(summary, "病名", next);
-      summary = res.next;
-      if (res.changed) changedRules.push("病名");
-    }
-
-    return {
-      plan: {
-        ...plan,
-        policySummary: summary,
-      },
-      changedRules,
-    };
-  };
 
   // Listen for agent progress (including skill matching)
   useEffect(() => {
@@ -514,19 +230,7 @@ export function ConfigSidebar({
   // Listen for chat streaming
   useEffect(() => {
     const unlistenStream = listen<{ chunk: string; full: string }>("chat-stream", (event) => {
-      // Remove [THOUGHT]:... and [thinking]...[/thinking] blocks from display
-      let cleaned = event.payload.full;
-      // Remove [THOUGHT]: ... patterns (entire line or until end of thought)
-      cleaned = cleaned.replace(/\[THOUGHT\]:?\s*[\s\S]*?(?=\n\n|\n[A-Z]|$)/gi, '');
-      // Remove [thinking]...[/thinking] blocks
-      cleaned = cleaned.replace(/\[thinking\][\s\S]*?\[\/thinking\]\s*/gi, '');
-      // Trim leading/trailing whitespace
-      cleaned = cleaned
-        .split("\n")
-        .filter(line => !/^\s*ファイル.*(アップロード|開い).*ください[。.!！]?\s*$/.test(line))
-        .join("\n")
-        .trim();
-      setStreamingContent(cleaned);
+      setStreamingContent(filterThoughtTags(event.payload.full));
     });
     return () => { unlistenStream.then(f => f()); };
   }, []);
@@ -559,9 +263,9 @@ export function ConfigSidebar({
 
   const handleCreateNewThread = () => {
     if (canStop || isProcessing) return;
-    const thread = createThread();
+    const thread = createThread(INITIAL_ASSISTANT_MESSAGE);
     setThreads((prev) => {
-      const next = [thread, ...prev].slice(0, MAX_CHAT_THREADS);
+      const next = clampThreads([thread, ...prev]);
       persistThreads(next, thread.id);
       return next;
     });
@@ -645,8 +349,6 @@ export function ConfigSidebar({
     }
 
     if (normalized === "処理対象を確認" || normalized === "選択ファイルを確認") {
-      const namesFromPath = (paths: string[]) =>
-        paths.map((p) => p.split(/[\\/]/).pop() || p).filter(Boolean);
       const selectedNames = namesFromPath(selectedFilePaths);
       let targetSummary = "";
 
@@ -676,13 +378,14 @@ export function ConfigSidebar({
       return;
     }
 
-    if (shouldRunAnonymizationDirectly(text)) {
+    const hasExecutablePlan = !!activeBulkPlan || ((currentPlan?.replacements?.length ?? 0) > 0);
+    if (shouldRunAnonymizationDirectly(text, hasExecutablePlan)) {
       if (currentDirPath && onStartBulkReview && selectedFilePaths.length > 0) {
         replaceActiveThread([...history, {
           role: "assistant",
           content: `選択された ${selectedFilePaths.length} 件を匿名化します。結果が出るまでお待ちください。`,
         }]);
-        onStartBulkReview(buildExecutionTaskContext());
+        onStartBulkReview(buildExecutionTaskContext(taskContext, activeBulkPlan));
         return;
       }
 
@@ -698,7 +401,7 @@ export function ConfigSidebar({
         role: "assistant",
         content: "匿名化を実行します。結果が出るまでお待ちください。",
       }]);
-      onRunAnonymization(buildExecutionTaskContext());
+      onRunAnonymization(buildExecutionTaskContext(taskContext, activeBulkPlan));
       return;
     }
 
@@ -762,7 +465,12 @@ export function ConfigSidebar({
 
       const assistantMessage: Message = {
         role: "assistant",
-        content: resolveResponseContent(response.message, text),
+        content: resolveResponseContent(
+          response.message,
+          text,
+          streamEndReasonRef.current === "cancelled",
+          !!currentContent || selectedFilePaths.length > 0 || fileCount > 0,
+        ),
         bulkPlan: response.bulkPlan || undefined,
         workflowSteps: response.workflowSteps || undefined,
         suggestions: response.suggestions || undefined,
@@ -806,14 +514,14 @@ export function ConfigSidebar({
     // Use onStartBulkReview instead for sequential review flow
     if (currentDirPath && onStartBulkReview && selectedFilePaths.length > 0) {
       // Start sequential review mode with per-file AI analysis
-      onStartBulkReview(buildExecutionTaskContext());
+      onStartBulkReview(buildExecutionTaskContext(taskContext, activeBulkPlan));
       setActiveBulkPlan(null);
       return;
     }
 
     // Single file mode - use the original anonymization flow
     if (!currentDirPath && currentContent) {
-      onRunAnonymization(buildExecutionTaskContext());
+      onRunAnonymization(buildExecutionTaskContext(taskContext, activeBulkPlan));
       return;
     }
 
