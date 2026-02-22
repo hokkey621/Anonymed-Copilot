@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use crate::domain::model::ReplacementEntry;
 use crate::infrastructure::llm::LlmMessage;
+use crate::state::CancellationState;
 
 #[derive(Deserialize)]
 struct GeminiResponse {
@@ -389,7 +390,7 @@ impl GeminiHandler {
         app: &tauri::AppHandle,
     ) -> Result<String, String> {
         use futures_util::StreamExt;
-        use tauri::Emitter;
+        use tauri::{Emitter, Manager};
 
         if cfg!(debug_assertions) {
             println!(
@@ -441,8 +442,27 @@ impl GeminiHandler {
 
         let mut full_text = String::new();
         let mut stream = response.bytes_stream();
+        let emit_end = |reason: &str, full: &str| {
+            let _ = app.emit(
+                "chat-stream-end",
+                serde_json::json!({
+                    "full": full,
+                    "reason": reason
+                }),
+            );
+        };
+
+        if app.state::<CancellationState>().is_chat_cancelled() {
+            emit_end("cancelled", &full_text);
+            return Ok(full_text);
+        }
 
         while let Some(chunk_result) = stream.next().await {
+            if app.state::<CancellationState>().is_chat_cancelled() {
+                emit_end("cancelled", &full_text);
+                return Ok(full_text);
+            }
+
             match chunk_result {
                 Ok(chunk) => {
                     let chunk_str = String::from_utf8_lossy(&chunk);
@@ -472,12 +492,7 @@ impl GeminiHandler {
         }
 
         // Emit completion event
-        let _ = app.emit(
-            "chat-stream-end",
-            serde_json::json!({
-                "full": full_text.clone()
-            }),
-        );
+        emit_end("completed", &full_text);
 
         Ok(full_text)
     }
