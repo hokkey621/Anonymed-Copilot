@@ -124,13 +124,117 @@ pub const EXECUTION_KEYWORDS: &[&str] = &[
     "匿名化を実行",
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HintCandidate {
+    pub id: &'static str,
+    pub label: &'static str,
+}
+
+impl HintCandidate {
+    pub const fn new(id: &'static str, label: &'static str) -> Self {
+        Self { id, label }
+    }
+}
+
+pub fn discovery_hint_candidates_without_files() -> Vec<HintCandidate> {
+    vec![
+        HintCandidate::new("open_file", "ファイルを開く"),
+        HintCandidate::new("open_folder", "フォルダを開く"),
+        HintCandidate::new("show_usage", "使い方を教えて"),
+        HintCandidate::new("ask_capability", "今できることを教えて"),
+        HintCandidate::new("show_shortcut", "最短の操作を教えて"),
+    ]
+}
+
+pub fn discovery_hint_candidates_with_files() -> Vec<HintCandidate> {
+    vec![
+        HintCandidate::new("create_plan", "匿名化プランを作成"),
+        HintCandidate::new("create_plan_standard", "標準ルールで作成"),
+        HintCandidate::new("check_targets", "処理対象を確認"),
+        HintCandidate::new("ask_purpose", "利用目的を選ぶ"),
+        HintCandidate::new("show_shortcut", "最短の操作を教えて"),
+    ]
+}
+
+pub fn help_hint_candidates(file_count: usize) -> Vec<HintCandidate> {
+    if file_count == 0 {
+        vec![
+            HintCandidate::new("open_file", "ファイルを開く"),
+            HintCandidate::new("check_targets", "処理対象を確認"),
+            HintCandidate::new("create_plan", "匿名化プランを作成"),
+            HintCandidate::new("show_usage", "使い方を教えて"),
+            HintCandidate::new("show_shortcut", "最短の操作を教えて"),
+        ]
+    } else {
+        vec![
+            HintCandidate::new("check_targets", "処理対象を確認"),
+            HintCandidate::new("create_plan", "匿名化プランを作成"),
+            HintCandidate::new("create_plan_standard", "標準ルールで作成"),
+            HintCandidate::new("ask_purpose", "利用目的を選ぶ"),
+            HintCandidate::new("show_shortcut", "最短の操作を教えて"),
+        ]
+    }
+}
+
+pub fn purpose_hint_candidates() -> Vec<HintCandidate> {
+    vec![
+        HintCandidate::new("purpose_vaccine", "ワクチン研究用"),
+        HintCandidate::new("purpose_education", "教材作成用"),
+        HintCandidate::new("purpose_case_report", "症例報告用"),
+        HintCandidate::new("purpose_research", "研究データ共有用"),
+        HintCandidate::new("purpose_standard", "標準ルールで作成"),
+    ]
+}
+
+pub fn plan_hint_candidates() -> Vec<HintCandidate> {
+    vec![
+        HintCandidate::new("run_plan", "この内容で実行"),
+        HintCandidate::new("revise_rules", "一部ルールを修正"),
+        HintCandidate::new("explain_plan", "変更点を説明して"),
+        HintCandidate::new("revise_date", "日付ルールを調整"),
+        HintCandidate::new("revise_age", "年齢ルールを調整"),
+    ]
+}
+
+pub fn revision_hint_candidates() -> Vec<HintCandidate> {
+    vec![
+        HintCandidate::new("revise_date", "日付ルールを調整"),
+        HintCandidate::new("revise_age", "年齢ルールを調整"),
+        HintCandidate::new("revise_name", "氏名ルールを調整"),
+        HintCandidate::new("rerun", "修正して再実行"),
+        HintCandidate::new("show_diff", "変更点を説明して"),
+    ]
+}
+
+pub fn troubleshoot_hint_candidates() -> Vec<HintCandidate> {
+    vec![
+        HintCandidate::new("show_error", "エラー原因を確認"),
+        HintCandidate::new("check_settings", "設定を見直す"),
+        HintCandidate::new("retry", "修正して再実行"),
+        HintCandidate::new("check_ollama", "Ollama接続を確認"),
+        HintCandidate::new("switch_model", "モデルを変更する"),
+    ]
+}
+
+pub fn off_topic_hint_candidates() -> Vec<HintCandidate> {
+    vec![
+        HintCandidate::new("create_plan", "匿名化プランを作成"),
+        HintCandidate::new("check_targets", "処理対象を確認"),
+        HintCandidate::new("show_usage", "使い方を教えて"),
+        HintCandidate::new("ask_capability", "今できることを教えて"),
+    ]
+}
+
 /// Suggestion chips
 pub fn initial_suggestions() -> Vec<String> {
     vec!["匿名化したい".to_string(), "使い方が知りたい".to_string()]
 }
 
 pub fn help_suggestions() -> Vec<String> {
-    vec!["ファイルを開きたい".to_string(), "匿名化を開始".to_string()]
+    vec![
+        "ファイルを開く".to_string(),
+        "選択ファイルを確認".to_string(),
+    ]
 }
 
 pub fn bulk_options() -> Vec<String> {
@@ -138,31 +242,43 @@ pub fn bulk_options() -> Vec<String> {
 }
 
 pub fn create_plan_options() -> Vec<String> {
-    vec!["変更内容を確認".to_string(), "もう少し詳しく".to_string()]
+    discovery_hint_candidates_with_files()
+        .into_iter()
+        .take(3)
+        .map(|c| c.label.to_string())
+        .collect()
 }
 
 pub fn anonymization_purpose_options() -> Vec<String> {
-    vec![
-        "ワクチン開発用".to_string(),
-        "教材作成用".to_string(),
-        "匿名化プランを作成 (標準)".to_string(),
-    ]
+    purpose_hint_candidates()
+        .into_iter()
+        .take(3)
+        .map(|c| c.label.to_string())
+        .collect()
 }
 
 pub fn default_suggestions() -> Vec<String> {
     vec![
-        "内容を確認する".to_string(),
-        "詳しく教えて".to_string(),
         "匿名化プランを作成".to_string(),
+        "標準ルールで作成".to_string(),
+        "処理対象を確認".to_string(),
     ]
 }
 
 pub fn plan_created_suggestions() -> Vec<String> {
-    vec![
-        "変更を適用".to_string(),
-        "修正したい".to_string(),
-        "詳しく説明して".to_string(),
-    ]
+    plan_hint_candidates()
+        .into_iter()
+        .take(3)
+        .map(|c| c.label.to_string())
+        .collect()
+}
+
+pub fn revision_suggestions() -> Vec<String> {
+    revision_hint_candidates()
+        .into_iter()
+        .take(3)
+        .map(|c| c.label.to_string())
+        .collect()
 }
 
 /// Default workflow steps
