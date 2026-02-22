@@ -57,12 +57,60 @@ impl AgentOrchestrator {
         Ok(Self { handler })
     }
 
+    fn extract_user_locked_policy(task_input: &str) -> Vec<String> {
+        let start_tag = "[USER_LOCKED_POLICY]";
+        let end_tag = "[/USER_LOCKED_POLICY]";
+        let Some(start) = task_input.find(start_tag) else {
+            return Vec::new();
+        };
+        let Some(end) = task_input.find(end_tag) else {
+            return Vec::new();
+        };
+        if end <= start {
+            return Vec::new();
+        }
+        let body = &task_input[start + start_tag.len()..end];
+        body.lines()
+            .map(|line| line.trim().trim_start_matches("- ").trim().to_string())
+            .filter(|line| !line.is_empty())
+            .collect()
+    }
+
+    fn strip_user_locked_policy(task_input: &str) -> String {
+        let start_tag = "[USER_LOCKED_POLICY]";
+        let end_tag = "[/USER_LOCKED_POLICY]";
+        if let (Some(start), Some(_end)) = (task_input.find(start_tag), task_input.find(end_tag)) {
+            let mut base = task_input[..start].trim().to_string();
+            if base.is_empty() {
+                base = "Medical Case Study".to_string();
+            }
+            return base;
+        }
+        task_input.trim().to_string()
+    }
+
     fn local_fast_strategy(task_name: &str) -> AnonymizationStrategy {
+        let locked_policy = Self::extract_user_locked_policy(task_name);
+        let base_task = Self::strip_user_locked_policy(task_name);
+        let specific_instructions = if locked_policy.is_empty() {
+            "Preserve medical meaning while anonymizing personal information.".to_string()
+        } else {
+            format!(
+                "Preserve medical meaning while anonymizing personal information. \
+Follow USER_LOCKED_POLICY strictly and do not change unspecified rules.\n{}",
+                locked_policy
+                    .iter()
+                    .map(|line| format!("- {}", line))
+                    .collect::<Vec<String>>()
+                    .join("\n")
+            )
+        };
+
         AnonymizationStrategy {
-            task_context: if task_name.trim().is_empty() {
+            task_context: if base_task.trim().is_empty() {
                 "Medical Case Study".to_string()
             } else {
-                task_name.to_string()
+                base_task
             },
             focus_areas: vec![
                 "Patient Names".to_string(),
@@ -71,8 +119,7 @@ impl AgentOrchestrator {
             ],
             date_handling: "relative".to_string(),
             name_handling: "replace_tag".to_string(),
-            specific_instructions:
-                "Preserve medical meaning while anonymizing personal information.".to_string(),
+            specific_instructions,
         }
     }
 
