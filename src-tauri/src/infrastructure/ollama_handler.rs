@@ -292,7 +292,7 @@ impl OllamaHandler {
                 .chat_once(
                     turns,
                     Some(&strict_system_prompt),
-                    0.1,
+                    0.0,
                     if attempt == 1 {
                         base_num_predict
                     } else {

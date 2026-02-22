@@ -260,7 +260,7 @@ impl GeminiHandler {
                 }],
             }),
             generation_config: GenerationConfig {
-                temperature: 0.1,
+                temperature: 0.0,
                 response_mime_type: "application/json".to_string(),
             },
         };
