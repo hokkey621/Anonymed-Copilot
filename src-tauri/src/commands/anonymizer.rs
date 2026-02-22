@@ -271,7 +271,9 @@ fn infer_next_state(
 ) -> (ChatPhase, &'static str) {
     let has_plan_flow_context = matches!(
         previous_state,
-        Some(ChatPhase::PlanPresented) | Some(ChatPhase::ExecutionReady) | Some(ChatPhase::Revision)
+        Some(ChatPhase::PlanPresented)
+            | Some(ChatPhase::ExecutionReady)
+            | Some(ChatPhase::Revision)
     );
 
     if detect_help_intent(last_user_message) {
@@ -653,7 +655,8 @@ fn guidance_message_for_state(state: ChatPhase, file_count: usize, has_purpose: 
             "問題を切り分けます。発生したエラー内容と直前の操作を教えてください。".to_string()
         }
         ChatPhase::OffTopic => {
-            "すみません。匿名化以外のご相談には対応していません。匿名化のお手伝いをしましょうか。".to_string()
+            "すみません。匿名化以外のご相談には対応していません。匿名化のお手伝いをしましょうか。"
+                .to_string()
         }
         _ => "続けて指示をお願いします。".to_string(),
     }
@@ -830,10 +833,13 @@ pub async fn agent_chat(
     let mut category = infer_interaction_category(last_user_message, has_purpose, file_count);
     let has_plan_flow_context = matches!(
         chat_phase,
-        Some(ChatPhase::PlanPresented) | Some(ChatPhase::ExecutionReady) | Some(ChatPhase::Revision)
+        Some(ChatPhase::PlanPresented)
+            | Some(ChatPhase::ExecutionReady)
+            | Some(ChatPhase::Revision)
     );
     if has_plan_flow_context
-        && (category == InteractionCategory::General || detect_rule_tuning_intent(last_user_message))
+        && (category == InteractionCategory::General
+            || detect_rule_tuning_intent(last_user_message))
     {
         category = InteractionCategory::Revision;
     }
@@ -1022,10 +1028,13 @@ pub async fn agent_chat_streaming(
     let mut category = infer_interaction_category(last_user_message, has_purpose, file_count);
     let has_plan_flow_context = matches!(
         chat_phase,
-        Some(ChatPhase::PlanPresented) | Some(ChatPhase::ExecutionReady) | Some(ChatPhase::Revision)
+        Some(ChatPhase::PlanPresented)
+            | Some(ChatPhase::ExecutionReady)
+            | Some(ChatPhase::Revision)
     );
     if has_plan_flow_context
-        && (category == InteractionCategory::General || detect_rule_tuning_intent(last_user_message))
+        && (category == InteractionCategory::General
+            || detect_rule_tuning_intent(last_user_message))
     {
         category = InteractionCategory::Revision;
     }
