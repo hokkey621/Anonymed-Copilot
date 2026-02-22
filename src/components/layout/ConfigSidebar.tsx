@@ -7,7 +7,7 @@ import { ChatMessage } from "@/components/chat/ChatMessage";
 import { BulkPlanCard } from "@/components/chat/BulkPlanCard";
 import { SuggestionChips } from "@/components/chat/SuggestionChips";
 import { AgentProgressEvent } from "./ProgressIndicator";
-import { Send, FileText, Loader2, Sparkles } from "lucide-react";
+import { Send, FileText, Loader2, Sparkles, Plus, Square } from "lucide-react";
 
 export type ModelProvider = "gemini" | "local_gemma";
 
@@ -17,6 +17,15 @@ interface Message {
   bulkPlan?: BulkExecutionPlan;
   workflowSteps?: WorkflowStep[];
   suggestions?: string[];
+}
+
+interface ChatThread {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  messages: Message[];
+  activeSkills: string[];
 }
 
 interface BulkExecutionPlan {
@@ -72,12 +81,28 @@ interface ConfigSidebarProps {
   canGoPrevious?: boolean;
   canGoNext?: boolean;
   fileStatuses?: { path: string; fileName: string; status: 'approved' | 'skipped' | 'pending' }[];
+  onStopOperations?: () => Promise<void> | void;
+}
+
+interface PersistedChatThreads {
+  activeThreadId: string;
+  threads: ChatThread[];
 }
 
 const MODEL_OPTIONS: { value: ModelProvider; label: string }[] = [
   { value: "gemini", label: "Gemini" },
   { value: "local_gemma", label: "Local Gemma (Ollama)" },
 ];
+
+const CHAT_THREADS_STORAGE_KEY = "anonymed-copilot-chat-threads-v1";
+const MAX_CHAT_THREADS = 30;
+const DEFAULT_THREAD_TITLE = "新しいチャット";
+
+const INITIAL_ASSISTANT_MESSAGE: Message = {
+  role: "assistant",
+  content: "こんにちは。ユーザーテストへのご協力ありがとうございます！\n\nまずは左上の「File」>「ファイルを開く」から、匿名化したいカルテや資料（テキストファイル）を開いてください。\n\n個人情報は自動的に検出・匿名化されます。",
+  suggestions: ["匿名化を実行して", "使い方を教えて"],
+};
 
 export function ConfigSidebar({
   onRunAnonymization,
@@ -102,16 +127,30 @@ export function ConfigSidebar({
   canGoPrevious = false,
   canGoNext = true,
   fileStatuses = [],
+  onStopOperations,
 }: ConfigSidebarProps) {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: "assistant",
-      content: "こんにちは。ユーザーテストへのご協力ありがとうございます！\n\nまずは左上の「File」>「ファイルを開く」から、匿名化したいカルテや資料（テキストファイル）を開いてください。\n\n個人情報は自動的に検出・匿名化されます。",
-      suggestions: ["匿名化を実行して", "使い方を教えて"]
-    }
-  ]);
+  const createThread = (title = DEFAULT_THREAD_TITLE): ChatThread => {
+    const now = Date.now();
+    const id =
+      typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${now}-${Math.random().toString(36).slice(2)}`;
+    return {
+      id,
+      title,
+      createdAt: now,
+      updatedAt: now,
+      messages: [INITIAL_ASSISTANT_MESSAGE],
+      activeSkills: [],
+    };
+  };
+
+  const [messages, setMessages] = useState<Message[]>([INITIAL_ASSISTANT_MESSAGE]);
+  const [threads, setThreads] = useState<ChatThread[]>([]);
+  const [activeThreadId, setActiveThreadId] = useState<string>("");
   const [inputInfo, setInputInfo] = useState("");
   const [isChatLoading, setIsChatLoading] = useState(false);
+  const [isStopRequested, setIsStopRequested] = useState(false);
   const [taskContext, setTaskContext] = useState("Medical Case Study");
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{ completed: number; total: number; currentFile?: string } | null>(null);
@@ -121,7 +160,47 @@ export function ConfigSidebar({
   const [streamingContent, setStreamingContent] = useState<string>("");
   const [thinkingPhase, setThinkingPhase] = useState<string>("");
   const [isApproving, setIsApproving] = useState(false);
+  const [activeSkills, setActiveSkills] = useState<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const sortedThreads = [...threads].sort((a, b) => b.updatedAt - a.updatedAt);
+  const canStop = isChatLoading || !!bulkAnalysisProgress?.isAnalyzing;
+
+  const deriveThreadTitle = (threadMessages: Message[], fallback: string): string => {
+    const firstUser = threadMessages.find((m) => m.role === "user")?.content.trim();
+    if (!firstUser) return fallback;
+    return firstUser.length > 24 ? `${firstUser.slice(0, 24)}...` : firstUser;
+  };
+
+  const persistThreads = (nextThreads: ChatThread[], nextActiveThreadId: string) => {
+    const payload: PersistedChatThreads = {
+      activeThreadId: nextActiveThreadId,
+      threads: nextThreads,
+    };
+    localStorage.setItem(CHAT_THREADS_STORAGE_KEY, JSON.stringify(payload));
+  };
+
+  const replaceActiveThread = (nextMessages: Message[], nextSkills?: string[]) => {
+    const skills = nextSkills ?? activeSkills;
+    setMessages(nextMessages);
+    setActiveSkills(skills);
+    setThreads((prev) => {
+      const updated = prev
+        .map((thread) => {
+          if (thread.id !== activeThreadId) return thread;
+          return {
+            ...thread,
+            messages: nextMessages,
+            activeSkills: skills,
+            updatedAt: Date.now(),
+            title: deriveThreadTitle(nextMessages, thread.title),
+          };
+        })
+        .slice(0, MAX_CHAT_THREADS);
+      persistThreads(updated, activeThreadId);
+      return updated;
+    });
+  };
 
   // Helper function to filter out thought tags from AI responses
   const filterThoughtTags = (text: string): string => {
@@ -193,7 +272,39 @@ export function ConfigSidebar({
     return FILE_CONTENT_KEYWORDS.some(kw => text.includes(kw));
   };
 
-  const [activeSkills, setActiveSkills] = useState<string[]>([]);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(CHAT_THREADS_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as PersistedChatThreads;
+        if (Array.isArray(parsed.threads) && parsed.threads.length > 0) {
+          const initialActiveId = parsed.activeThreadId || parsed.threads[0].id;
+          const initialThread =
+            parsed.threads.find((t) => t.id === initialActiveId) ?? parsed.threads[0];
+          setThreads(parsed.threads.slice(0, MAX_CHAT_THREADS));
+          setActiveThreadId(initialThread.id);
+          setMessages(initialThread.messages.length > 0 ? initialThread.messages : [INITIAL_ASSISTANT_MESSAGE]);
+          setActiveSkills(initialThread.activeSkills ?? []);
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to load chat history:", e);
+    }
+
+    const thread = createThread();
+    setThreads([thread]);
+    setActiveThreadId(thread.id);
+    setMessages(thread.messages);
+    setActiveSkills(thread.activeSkills);
+    persistThreads([thread], thread.id);
+  }, []);
+
+  useEffect(() => {
+    if (threads.length === 0 || !activeThreadId) return;
+    persistThreads(threads.slice(0, MAX_CHAT_THREADS), activeThreadId);
+  }, [threads, activeThreadId]);
+
   const allReviewed = bulkReviewMode && fileStatuses.length > 0 && fileStatuses.every(f => f.status !== 'pending');
   const approvedCount = fileStatuses.filter(f => f.status === 'approved').length;
 
@@ -214,11 +325,16 @@ export function ConfigSidebar({
         if (match) {
           const skills = match[1].split(", ").map(s => s.trim());
           setActiveSkills(skills);
+          setThreads((prev) =>
+            prev.map((thread) =>
+              thread.id === activeThreadId ? { ...thread, activeSkills: skills, updatedAt: Date.now() } : thread
+            )
+          );
         }
       }
     });
     return () => { unlisten.then(f => f()); };
-  }, []);
+  }, [activeThreadId]);
 
   // Listen for bulk progress
   useEffect(() => {
@@ -255,6 +371,15 @@ export function ConfigSidebar({
     return () => { unlistenStream.then(f => f()); };
   }, []);
 
+  useEffect(() => {
+    const unlistenEnd = listen<{ full: string; reason?: string }>("chat-stream-end", (event) => {
+      if (event.payload.reason === "cancelled") {
+        setThinkingPhase("停止しました");
+      }
+    });
+    return () => { unlistenEnd.then(f => f()); };
+  }, []);
+
   // Listen for thinking phases
   useEffect(() => {
     const unlistenPhase = listen<{ phase: string; message: string }>("thinking-phase", (event) => {
@@ -270,49 +395,88 @@ export function ConfigSidebar({
     }
   }, [messages]);
 
-  const handleSendMessage = async () => {
-    if (!inputInfo.trim() || isChatLoading) return;
+  const handleCreateNewThread = () => {
+    if (canStop || isProcessing) return;
+    const thread = createThread();
+    setThreads((prev) => {
+      const next = [thread, ...prev].slice(0, MAX_CHAT_THREADS);
+      persistThreads(next, thread.id);
+      return next;
+    });
+    setActiveThreadId(thread.id);
+    setMessages(thread.messages);
+    setActiveSkills([]);
+    setStreamingContent("");
+    setThinkingPhase("");
+  };
 
-    const userMsg: Message = { role: "user", content: inputInfo };
-    setMessages(prev => [...prev, userMsg]);
+  const handleSwitchThread = (threadId: string) => {
+    if (canStop || isProcessing) return;
+    const thread = threads.find((t) => t.id === threadId);
+    if (!thread) return;
+    setActiveThreadId(thread.id);
+    setMessages(thread.messages);
+    setActiveSkills(thread.activeSkills ?? []);
+    setStreamingContent("");
+    setThinkingPhase("");
+  };
+
+  const handleStop = async () => {
+    if (!canStop || isStopRequested) return;
+    setIsStopRequested(true);
+    setThinkingPhase("停止要求中...");
+    try {
+      if (onStopOperations) {
+        await onStopOperations();
+      } else {
+        await invoke("cancel_active_operations");
+      }
+    } catch (e) {
+      console.error("Failed to request stop:", e);
+    } finally {
+      setIsStopRequested(false);
+    }
+  };
+
+  const sendText = async (text: string) => {
+    if (!text.trim() || isChatLoading || !activeThreadId) return;
+
+    const userMsg: Message = { role: "user", content: text };
+    const history = [...messages, userMsg];
+    replaceActiveThread(history);
     setInputInfo("");
 
-    if (shouldRunAnonymizationDirectly(inputInfo)) {
+    if (shouldRunAnonymizationDirectly(text)) {
       if (currentDirPath && onStartBulkReview && selectedFilePaths.length > 0) {
-        setMessages(prev => [...prev, {
+        replaceActiveThread([...history, {
           role: "assistant",
-          content: `選択された ${selectedFilePaths.length} 件を匿名化します。結果が出るまでお待ちください。`
+          content: `選択された ${selectedFilePaths.length} 件を匿名化します。結果が出るまでお待ちください。`,
         }]);
         onStartBulkReview(taskContext);
         return;
       }
 
       if (!currentContent) {
-        setMessages(prev => [...prev, {
+        replaceActiveThread([...history, {
           role: "assistant",
-          content: "匿名化するテキストがありません。先にファイルを開いてください。"
+          content: "匿名化するテキストがありません。先にファイルを開いてください。",
         }]);
         return;
       }
-      setMessages(prev => [...prev, {
+
+      replaceActiveThread([...history, {
         role: "assistant",
-        content: "匿名化を実行します。結果が出るまでお待ちください。"
+        content: "匿名化を実行します。結果が出るまでお待ちください。",
       }]);
       onRunAnonymization(taskContext);
       return;
     }
 
     setIsChatLoading(true);
-
-    const needsFileContent = checkNeedsFileContent(inputInfo);
-
-    const newHistory = [...messages, userMsg];
-    const apiMessages = buildApiMessages(newHistory);
-
-    // NOTE: ファイル内容は editorContent 経由でのみ送信し、二重送信を避ける
+    const needsFileContent = checkNeedsFileContent(text);
+    const apiMessages = buildApiMessages(history);
 
     try {
-      // Start with empty streaming content
       setStreamingContent("");
 
       const response = await invoke<AgentChatResponse>("agent_chat_streaming", {
@@ -322,24 +486,22 @@ export function ConfigSidebar({
         provider: selectedProvider,
       });
 
-      const newMessage: Message = {
+      const assistantMessage: Message = {
         role: "assistant",
-        content: resolveResponseContent(response.message, inputInfo),
+        content: resolveResponseContent(response.message, text),
         bulkPlan: response.bulkPlan || undefined,
         workflowSteps: response.workflowSteps || undefined,
-        suggestions: response.suggestions || undefined
+        suggestions: response.suggestions || undefined,
       };
 
-      setMessages(prev => [...prev, newMessage]);
+      replaceActiveThread([...history, assistantMessage], response.appliedSkills ?? []);
 
       if (response.bulkPlan && response.workflowSteps) {
         setActiveBulkPlan(response.bulkPlan);
         setWorkflowSteps(response.workflowSteps);
       }
-      setActiveSkills(response.appliedSkills ?? []);
 
-      // Auto-detect task context
-      const lowerInput = inputInfo.toLowerCase();
+      const lowerInput = text.toLowerCase();
       if (lowerInput.includes("ワクチン") || lowerInput.includes("vaccine")) {
         setTaskContext("Vaccine Development");
       } else if (lowerInput.includes("教育") || lowerInput.includes("教材")) {
@@ -347,10 +509,15 @@ export function ConfigSidebar({
       }
     } catch (e) {
       console.error("Chat error:", e);
-      setMessages(prev => [...prev, { role: "assistant", content: `エラー: ${formatCommandError(e)}` }]);
+      replaceActiveThread([...history, { role: "assistant", content: `エラー: ${formatCommandError(e)}` }]);
     } finally {
       setIsChatLoading(false);
+      setStreamingContent("");
     }
+  };
+
+  const handleSendMessage = async () => {
+    await sendText(inputInfo);
   };
 
   const handleBulkCommit = async () => {
@@ -383,13 +550,13 @@ export function ConfigSidebar({
           taskName: taskContext.replace(/\s+/g, '_'),
           targetFiles: selectedFilePaths.length > 0 ? selectedFilePaths : null
         });
-        setMessages(prev => [...prev, {
+        replaceActiveThread([...messages, {
           role: "assistant",
           content: "✅ 完了しました。`anonymized_outputs` フォルダに保存されました。"
         }]);
       }
     } catch (e) {
-      setMessages(prev => [...prev, { role: "assistant", content: `❌ エラー: ${e}` }]);
+      replaceActiveThread([...messages, { role: "assistant", content: `❌ エラー: ${e}` }]);
     } finally {
       setIsBulkExecuting(false);
       setActiveBulkPlan(null);
@@ -400,6 +567,46 @@ export function ConfigSidebar({
 
   return (
     <div className="h-full flex flex-col bg-background">
+      <div className="border-b px-3 py-2 space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-medium text-muted-foreground">チャット履歴</span>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleCreateNewThread}
+            disabled={canStop || isProcessing}
+            className="h-7 px-2 text-xs"
+          >
+            <Plus size={12} className="mr-1" />
+            新規作成
+          </Button>
+        </div>
+        <div className="max-h-24 overflow-y-auto space-y-1">
+          {sortedThreads.map((thread) => (
+            <button
+              key={thread.id}
+              onClick={() => handleSwitchThread(thread.id)}
+              disabled={canStop || isProcessing}
+              className={`w-full text-left px-2 py-1.5 rounded text-xs transition-colors ${
+                thread.id === activeThreadId
+                  ? "bg-blue-500/10 border border-blue-500/20"
+                  : "hover:bg-muted border border-transparent"
+              }`}
+            >
+              <div className="truncate font-medium">{thread.title}</div>
+              <div className="text-[10px] text-muted-foreground">
+                {new Date(thread.updatedAt).toLocaleString("ja-JP", {
+                  month: "2-digit",
+                  day: "2-digit",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Chat Messages */}
       <ScrollArea className="flex-1" ref={scrollRef}>
         <div className="p-3 space-y-3">
@@ -425,79 +632,8 @@ export function ConfigSidebar({
            messages[messages.length - 1].suggestions!.length > 0 && (
             <SuggestionChips
               suggestions={messages[messages.length - 1].suggestions!}
-              onSelect={async (text) => {
-                // Directly send the suggestion as a message
-                if (isChatLoading) return;
-
-                const userMsg: Message = { role: "user", content: text };
-                setMessages(prev => [...prev, userMsg]);
-
-                if (shouldRunAnonymizationDirectly(text)) {
-                  if (currentDirPath && onStartBulkReview && selectedFilePaths.length > 0) {
-                    setMessages(prev => [...prev, {
-                      role: "assistant",
-                      content: `選択された ${selectedFilePaths.length} 件を匿名化します。結果が出るまでお待ちください。`
-                    }]);
-                    onStartBulkReview(taskContext);
-                    return;
-                  }
-
-                  if (!currentContent) {
-                    setMessages(prev => [...prev, {
-                      role: "assistant",
-                      content: "匿名化するテキストがありません。先にファイルを開いてください。"
-                    }]);
-                    return;
-                  }
-                  setMessages(prev => [...prev, {
-                    role: "assistant",
-                    content: "匿名化を実行します。結果が出るまでお待ちください。"
-                  }]);
-                  onRunAnonymization(taskContext);
-                  return;
-                }
-
-                setIsChatLoading(true);
-
-                const needsFileContent = checkNeedsFileContent(text);
-
-                const newHistory = [...messages, userMsg];
-                const apiMessages = buildApiMessages(newHistory);
-
-                // NOTE: ファイル内容は editorContent 経由でのみ送信し、二重送信を避ける
-
-                try {
-                  setStreamingContent("");
-                  const response = await invoke<AgentChatResponse>("agent_chat_streaming", {
-                    messages: apiMessages,
-                    fileCount: fileCount,
-                    editorContent: needsFileContent ? (currentContent || null) : null,
-                    provider: selectedProvider,
-                  });
-
-                  const newMessage: Message = {
-                    role: "assistant",
-                    content: resolveResponseContent(response.message, text),
-                    bulkPlan: response.bulkPlan || undefined,
-                    workflowSteps: response.workflowSteps || undefined,
-                    suggestions: response.suggestions || undefined
-                  };
-
-                  setMessages(prev => [...prev, newMessage]);
-
-                  if (response.bulkPlan && response.workflowSteps) {
-                    setActiveBulkPlan(response.bulkPlan);
-                    setWorkflowSteps(response.workflowSteps);
-                  }
-                  setActiveSkills(response.appliedSkills ?? []);
-                } catch (e) {
-                  console.error("Chat error:", e);
-                  setMessages(prev => [...prev, { role: "assistant", content: `エラー: ${formatCommandError(e)}` }]);
-                } finally {
-                  setIsChatLoading(false);
-                }
-              }}
-              disabled={isChatLoading}
+              onSelect={sendText}
+              disabled={isChatLoading || isProcessing}
             />
           )}
           {isChatLoading && (
@@ -645,13 +781,13 @@ export function ConfigSidebar({
                 if (onBulkComplete) {
                   const result = await onBulkComplete();
                   if (result && typeof result === 'object' && 'path' in result) {
-                    setMessages(prev => [...prev, {
+                    replaceActiveThread([...messages, {
                       role: "assistant",
                       content: `✅ 保存が完了しました！\n\n**保存先:**\n\`${result.path}\`\n\n**保存されたファイル (${result.files.length}件):**\n${result.files.map(f => `- ${f}`).join('\n')}`
                     }]);
                   } else if (typeof result === 'string') {
                     // Fallback for string return
-                     setMessages(prev => [...prev, {
+                     replaceActiveThread([...messages, {
                       role: "assistant",
                       content: `✅ 保存が完了しました！\n\n**保存先:**\n\`${result}\``
                     }]);
@@ -699,18 +835,31 @@ export function ConfigSidebar({
             onChange={(e) => setInputInfo(e.target.value)}
             placeholder={currentContent ? "質問を入力..." : "ご質問をどうぞ"}
             onKeyDown={(e) => e.key === 'Enter' && e.metaKey && handleSendMessage()}
-            disabled={isProcessing}
+            disabled={isProcessing || isChatLoading}
           />
-          <Button
-            size="sm"
-            variant="default"
-            onClick={handleSendMessage}
-            disabled={!inputInfo.trim() || isChatLoading}
-            className="shrink-0 gap-1.5"
-          >
-            <Send size={14} />
-            送信
-          </Button>
+          {canStop ? (
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={handleStop}
+              disabled={isStopRequested}
+              className="shrink-0 gap-1.5"
+            >
+              {isStopRequested ? <Loader2 size={14} className="animate-spin" /> : <Square size={14} />}
+              停止
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="default"
+              onClick={handleSendMessage}
+              disabled={!inputInfo.trim() || isChatLoading || isProcessing}
+              className="shrink-0 gap-1.5"
+            >
+              <Send size={14} />
+              送信
+            </Button>
+          )}
         </div>
 
         {/* Model selector row */}
