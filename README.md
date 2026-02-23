@@ -12,7 +12,7 @@ AIが自動で個人情報を検出し、適切な形式に置き換えます。
 
 ---
 
-## 🚀 すぐに試す
+## すぐに試す
 
 ### 1. アプリをダウンロード
 
@@ -43,8 +43,9 @@ AIが自動で個人情報を検出し、適切な形式に置き換えます。
 #### Local Gemma を使う場合
 
 ```bash
-ollama pull gemma3:12b-it-qat
+ollama pull gemma3:4b-it-qat
 OLLAMA_NUM_PARALLEL=2 OLLAMA_KEEP_ALIVE=30m OLLAMA_MAX_LOADED_MODELS=1 ollama serve
+```
 
 ### 3. アプリを起動
 
