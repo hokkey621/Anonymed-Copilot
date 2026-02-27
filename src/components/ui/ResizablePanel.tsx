@@ -15,6 +15,9 @@ interface ResizablePanelProps {
   className?: string;
 }
 
+/** Pixels to move per arrow key press */
+const KEYBOARD_STEP = 20;
+
 export function ResizablePanel({
   children,
   defaultWidth,
@@ -28,6 +31,13 @@ export function ResizablePanel({
   const panelRef = useRef<HTMLDivElement>(null);
   const startXRef = useRef(0);
   const startWidthRef = useRef(0);
+  const rafRef = useRef<number | null>(null);
+  const pendingWidthRef = useRef<number | null>(null);
+
+  const clamp = useCallback(
+    (w: number) => Math.max(minWidth, Math.min(maxWidth, w)),
+    [minWidth, maxWidth]
+  );
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -44,24 +54,53 @@ export function ResizablePanel({
       if (!isResizing) return;
 
       const delta = e.clientX - startXRef.current;
-      let newWidth: number;
+      const newWidth = handlePosition === "right"
+        ? startWidthRef.current + delta
+        : startWidthRef.current - delta;
 
-      if (handlePosition === "right") {
-        newWidth = startWidthRef.current + delta;
-      } else {
-        newWidth = startWidthRef.current - delta;
+      pendingWidthRef.current = clamp(newWidth);
+
+      // Throttle updates with rAF
+      if (rafRef.current === null) {
+        rafRef.current = requestAnimationFrame(() => {
+          if (pendingWidthRef.current !== null) {
+            setWidth(pendingWidthRef.current);
+            pendingWidthRef.current = null;
+          }
+          rafRef.current = null;
+        });
       }
-
-      // Clamp to min/max
-      newWidth = Math.max(minWidth, Math.min(maxWidth, newWidth));
-      setWidth(newWidth);
     },
-    [isResizing, handlePosition, minWidth, maxWidth]
+    [isResizing, handlePosition, clamp]
   );
 
   const handleMouseUp = useCallback(() => {
     setIsResizing(false);
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
   }, []);
+
+  // Keyboard resize on the handle
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      let delta = 0;
+      if (e.key === "ArrowRight") delta = KEYBOARD_STEP;
+      else if (e.key === "ArrowLeft") delta = -KEYBOARD_STEP;
+      else return;
+
+      e.preventDefault();
+      const direction = handlePosition === "right" ? 1 : -1;
+      setWidth(prev => clamp(prev + delta * direction));
+    },
+    [handlePosition, clamp]
+  );
+
+  // Double-click to reset to default width
+  const handleDoubleClick = useCallback(() => {
+    setWidth(defaultWidth);
+  }, [defaultWidth]);
 
   useEffect(() => {
     if (isResizing) {
@@ -108,20 +147,29 @@ export function ResizablePanel({
       {/* Resize Handle */}
       <div
         className={cn(
-          "resize-handle",
+          "resize-handle group",
           isResizing && "resize-handle-active"
         )}
         style={handleStyle}
         onMouseDown={handleMouseDown}
+        onDoubleClick={handleDoubleClick}
+        onKeyDown={handleKeyDown}
+        role="separator"
+        aria-orientation="vertical"
+        aria-valuenow={width}
+        aria-valuemin={minWidth}
+        aria-valuemax={maxWidth}
+        aria-label="パネルサイズ変更"
+        tabIndex={0}
       >
-        {/* Visual indicator line */}
+        {/* Visual indicator line – visible at rest so users can discover it */}
         <div
           className={cn(
             "absolute top-0 bottom-0 w-[2px] transition-colors",
             handlePosition === "right" ? "left-[2px]" : "right-[2px]",
             isResizing
               ? "bg-blue-500"
-              : "bg-transparent hover:bg-blue-400"
+              : "bg-border/60 group-hover:bg-blue-400 group-focus-visible:bg-blue-400"
           )}
         />
       </div>
