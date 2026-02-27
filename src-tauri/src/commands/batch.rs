@@ -406,6 +406,7 @@ pub async fn bulk_analyze_files(
     app: tauri::AppHandle,
     target_files: Vec<String>,
     task_context: String,
+    execution_plan: Option<crate::domain::model::BulkExecutionPlan>,
     provider: ModelProvider,
     cancellation_state: State<'_, CancellationState>,
     access_control: State<'_, AccessControl>,
@@ -465,7 +466,7 @@ pub async fn bulk_analyze_files(
     let matching_skills = find_matching_skills(&task_context);
     let skill_names = get_skill_names(&matching_skills);
     let strategy = orchestrator
-        .plan_strategy_without_text(&task_context, &matching_skills)
+        .plan_strategy_without_text(&task_context, &matching_skills, execution_plan.as_ref())
         .await
         .map_err(|e| format!("Failed to plan anonymization strategy: {}", e))?;
     let shared_orchestrator = Arc::new(orchestrator);
@@ -665,7 +666,7 @@ pub async fn process_bulk(
         // We use the same task context format as in interactive mode
         let task_context = format!("Bulk Anonymization (Trace: {})", model_version_hash);
         let analysis_result = orchestrator
-            .run_anonymization_pipeline(&app, &content, &task_context)
+            .run_anonymization_pipeline(&app, &content, &task_context, None)
             .await;
 
         match analysis_result {

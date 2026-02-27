@@ -66,6 +66,16 @@ pub struct AuditLog {
 /// Plan for bulk execution across multiple files
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PlanRule {
+    pub category: String,
+    pub method: String,
+    #[serde(default)]
+    pub detail: String,
+}
+
+/// Plan for bulk execution across multiple files
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BulkExecutionPlan {
     pub target_count: usize,
     pub estimated_time_ms: u64,
@@ -76,6 +86,8 @@ pub struct BulkExecutionPlan {
     pub plan_version: u32,
     #[serde(default)]
     pub plan_hash: String,
+    #[serde(default)]
+    pub rule_set: Vec<PlanRule>,
 }
 
 fn default_plan_version() -> u32 {

@@ -14,12 +14,12 @@ pub async fn analyze_text(
     app: tauri::AppHandle,
     text: String,
     task_context: String,
+    execution_plan: Option<BulkExecutionPlan>,
     provider: Option<ModelProvider>,
 ) -> Result<AnonPlan, String> {
     let orchestrator = AgentOrchestrator::new(&app, provider.unwrap_or_default())?;
-    // The user's input "task_context" here is effectively the prompt for the Planner (e.g. "Vaccine Study")
     let plan = orchestrator
-        .run_anonymization_pipeline(&app, &text, &task_context)
+        .run_anonymization_pipeline(&app, &text, &task_context, execution_plan.as_ref())
         .await?;
     Ok(plan)
 }
@@ -149,6 +149,19 @@ fn hash_plan_text(plan_text: &str) -> String {
 fn build_bulk_plan(target_count: usize, estimated_time_ms: u64, policy_summary: Vec<String>) -> BulkExecutionPlan {
     let normalized = normalize_policy_summary(&policy_summary);
     let locked_plan_text = build_locked_plan_text(&normalized);
+    let rule_set = normalized
+        .iter()
+        .map(|line| {
+            let mut parts = line.splitn(2, '→');
+            let category = parts.next().unwrap_or("その他").trim().to_string();
+            let method = parts.next().unwrap_or("**** で置換").trim().to_string();
+            crate::domain::model::PlanRule {
+                category,
+                method,
+                detail: line.to_string(),
+            }
+        })
+        .collect();
     BulkExecutionPlan {
         target_count,
         estimated_time_ms,
@@ -156,6 +169,7 @@ fn build_bulk_plan(target_count: usize, estimated_time_ms: u64, policy_summary: 
         plan_version: 1,
         plan_hash: hash_plan_text(&locked_plan_text),
         locked_plan_text,
+        rule_set,
     }
 }
 
@@ -257,6 +271,19 @@ pub async fn revise_bulk_plan(
     }
 
     let policy_summary = extract_policy_summary_from_locked_plan(&locked_plan_text);
+    let rule_set = policy_summary
+        .iter()
+        .map(|line| {
+            let mut parts = line.splitn(2, '→');
+            let category = parts.next().unwrap_or("その他").trim().to_string();
+            let method = parts.next().unwrap_or("**** で置換").trim().to_string();
+            crate::domain::model::PlanRule {
+                category,
+                method,
+                detail: line.to_string(),
+            }
+        })
+        .collect();
     let plan_hash = hash_plan_text(&locked_plan_text);
     let next_version = plan.plan_version.saturating_add(1);
 
@@ -267,6 +294,7 @@ pub async fn revise_bulk_plan(
         locked_plan_text,
         plan_version: next_version,
         plan_hash,
+        rule_set,
     })
 }
 

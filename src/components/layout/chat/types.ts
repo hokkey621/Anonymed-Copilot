@@ -17,6 +17,11 @@ export interface BulkExecutionPlan {
   lockedPlanText?: string;
   planVersion?: number;
   planHash?: string;
+  ruleSet?: {
+    category: string;
+    method: string;
+    detail?: string;
+  }[];
 }
 
 export interface WorkflowStep {

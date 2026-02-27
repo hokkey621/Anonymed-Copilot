@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useState, useEffect } from "react";
 import { ConfigSidebar } from "./ConfigSidebar";
-import type { ModelProvider } from "./chat/types";
+import type { BulkExecutionPlan, ModelProvider } from "./chat/types";
 import { EditorPanel } from "./EditorPanel";
 import { FileExplorer, OpenedFile } from "./FileExplorer";
 import { MenuBar } from "./MenuBar";
@@ -327,7 +327,7 @@ export function MainLayout() {
   };
 
   // Execute anonymization (triggered by "実行" button)
-  const handleAnonymize = async (task: string) => {
+  const handleAnonymize = async (task: string, executionPlan?: BulkExecutionPlan | null) => {
     if (!originalContent) return;
     setIsProcessing(true);
     try {
@@ -335,6 +335,7 @@ export function MainLayout() {
         const plan = await invoke<AnonPlan>("analyze_text", {
           text: originalContent,
           taskContext: task,
+          executionPlan: executionPlan ?? null,
           provider: selectedProvider,
         });
         setCurrentPlan(plan);
@@ -440,7 +441,7 @@ export function MainLayout() {
   // === Bulk Review Mode Handlers ===
 
   // Start bulk review: analyze each file with AI (parallel processing)
-  const handleStartBulkReview = async (taskContext: string) => {
+  const handleStartBulkReview = async (taskContext: string, executionPlan?: BulkExecutionPlan | null) => {
     if (selectedFilesForBulk.size === 0) return;
 
     const targetFiles = Array.from(selectedFilesForBulk);
@@ -455,6 +456,7 @@ export function MainLayout() {
       const response = await invoke<BulkAnalyzeResponse>("bulk_analyze_files", {
         targetFiles,
         taskContext,
+        executionPlan: executionPlan ?? null,
         provider: selectedProvider,
       });
       const validResults = response.items;

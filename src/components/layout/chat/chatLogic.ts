@@ -1,5 +1,3 @@
-import type { BulkExecutionPlan } from "./types";
-
 const FILE_CONTENT_KEYWORDS = [
   "計画を立てて",
   "一括",
@@ -102,29 +100,6 @@ export const shouldRunAnonymizationDirectly = (text: string, hasExecutablePlan: 
     return hasExecutablePlan;
   }
   return directCommands.has(normalized) || normalized.endsWith("を実行");
-};
-
-export const buildExecutionTaskContext = (
-  taskContext: string,
-  activeBulkPlan: BulkExecutionPlan | null,
-): string => {
-  if (!activeBulkPlan) {
-    return taskContext;
-  }
-
-  const lockedPlan = (activeBulkPlan.lockedPlanText || "").trim();
-  const policyLines = (activeBulkPlan.policySummary || [])
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .map((line) => `- ${line}`)
-    .join("\n");
-
-  const planBody = lockedPlan.length > 0 ? lockedPlan : policyLines;
-  if (!planBody) {
-    return taskContext;
-  }
-
-  return `${taskContext}\n\n[USER_LOCKED_POLICY]\n${planBody}\n[/USER_LOCKED_POLICY]`;
 };
 
 export const isPartialPlanEditIntent = (text: string): boolean => {

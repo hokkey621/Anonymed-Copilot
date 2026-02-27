@@ -16,7 +16,10 @@ interface BulkPlanCardProps {
 export function BulkPlanCard({ plan, onCommit, isExecuting, progress }: BulkPlanCardProps) {
   const progressPercent = progress ? Math.round((progress.completed / progress.total) * 100) : 0;
   const estimatedSeconds = Math.ceil(plan.estimatedTimeMs / 1000);
-  const normalizedPolicies = (plan.policySummary ?? []).filter((item) => item && item.trim().length > 0);
+  const normalizedPolicies = (plan.ruleSet && plan.ruleSet.length > 0
+    ? plan.ruleSet.map((rule) => rule.detail?.trim() || `${rule.category} → ${rule.method}`)
+    : (plan.policySummary ?? [])
+  ).filter((item) => item && item.trim().length > 0);
 
   return (
     <div className="rounded-md border bg-muted/30 text-sm">

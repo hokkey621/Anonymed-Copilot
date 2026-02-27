@@ -17,7 +17,6 @@ import {
   PLAN_FLOW_PHASES,
 } from "./chat/constants";
 import {
-  buildExecutionTaskContext,
   checkNeedsFileContent,
   filterThoughtTags,
   formatCommandError,
@@ -40,7 +39,7 @@ import type {
 export type { ModelProvider } from "./chat/types";
 
 interface ConfigSidebarProps {
-  onRunAnonymization: (task: string) => void;
+  onRunAnonymization: (task: string, executionPlan?: BulkExecutionPlan | null) => void;
   isProcessing: boolean;
   selectedProvider: ModelProvider;
   onProviderChange: (provider: ModelProvider) => void;
@@ -53,7 +52,7 @@ interface ConfigSidebarProps {
   currentFileName?: string;
   selectedFilePaths?: string[];
   // Bulk review mode props
-  onStartBulkReview?: (taskContext: string) => void;
+  onStartBulkReview?: (taskContext: string, executionPlan?: BulkExecutionPlan | null) => void;
   bulkReviewMode?: boolean;
   bulkReviewProgress?: { current: number; total: number; fileName: string };
   bulkAnalysisProgress?: { completed: number; total: number; isAnalyzing: boolean };
@@ -386,7 +385,7 @@ export function ConfigSidebar({
           role: "assistant",
           content: `選択された ${selectedFilePaths.length} 件を匿名化します。結果が出るまでお待ちください。`,
         }]);
-        onStartBulkReview(buildExecutionTaskContext(taskContext, activeBulkPlan));
+        onStartBulkReview(taskContext, activeBulkPlan);
         return;
       }
 
@@ -402,7 +401,7 @@ export function ConfigSidebar({
         role: "assistant",
         content: "匿名化を実行します。結果が出るまでお待ちください。",
       }]);
-      onRunAnonymization(buildExecutionTaskContext(taskContext, activeBulkPlan));
+      onRunAnonymization(taskContext, activeBulkPlan);
       return;
     }
 
@@ -518,14 +517,14 @@ export function ConfigSidebar({
     // Use onStartBulkReview instead for sequential review flow
     if (currentDirPath && onStartBulkReview && selectedFilePaths.length > 0) {
       // Start sequential review mode with per-file AI analysis
-      onStartBulkReview(buildExecutionTaskContext(taskContext, activeBulkPlan));
+      onStartBulkReview(taskContext, activeBulkPlan);
       setActiveBulkPlan(null);
       return;
     }
 
     // Single file mode - use the original anonymization flow
     if (!currentDirPath && currentContent) {
-      onRunAnonymization(buildExecutionTaskContext(taskContext, activeBulkPlan));
+      onRunAnonymization(taskContext, activeBulkPlan);
       return;
     }
 

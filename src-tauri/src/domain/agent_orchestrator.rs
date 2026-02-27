@@ -93,7 +93,8 @@ impl AgentOrchestrator {
 
     fn allow_non_mask_replacement(category: Option<&str>, instructions: &str) -> bool {
         let lower = instructions.to_lowercase();
-        let has_user_or_skill_override = lower.contains("user_locked_policy")
+        let has_user_or_skill_override = lower.contains("approved plan")
+            || lower.contains("approved rules")
             || lower.contains("skill")
             || lower.contains("特記事項")
             || lower.contains("置換");
@@ -189,61 +190,38 @@ impl AgentOrchestrator {
         Ok(Self { handler })
     }
 
-    fn extract_user_locked_policy(task_input: &str) -> Vec<String> {
-        let start_tag = "[USER_LOCKED_POLICY]";
-        let end_tag = "[/USER_LOCKED_POLICY]";
-        let Some(start) = task_input.find(start_tag) else {
-            return Vec::new();
-        };
-        let Some(end) = task_input.find(end_tag) else {
-            return Vec::new();
-        };
-        if end <= start {
-            return Vec::new();
-        }
-        let body = &task_input[start + start_tag.len()..end];
-        body.lines()
-            .map(|line| line.trim().trim_start_matches("- ").trim().to_string())
-            .filter(|line| !line.is_empty())
-            .collect()
-    }
-
-    fn strip_user_locked_policy(task_input: &str) -> String {
-        let start_tag = "[USER_LOCKED_POLICY]";
-        let end_tag = "[/USER_LOCKED_POLICY]";
-        if let (Some(start), Some(_end)) = (task_input.find(start_tag), task_input.find(end_tag)) {
-            let mut base = task_input[..start].trim().to_string();
-            if base.is_empty() {
-                base = "Medical Case Study".to_string();
+    fn local_fast_strategy(
+        task_name: &str,
+        execution_plan: Option<&crate::domain::model::BulkExecutionPlan>,
+    ) -> AnonymizationStrategy {
+        let base_task = task_name.trim();
+        let specific_instructions = if let Some(plan) = execution_plan {
+            if !plan.locked_plan_text.trim().is_empty() {
+                format!(
+                    "Approved plan (do not change):\n{}",
+                    plan.locked_plan_text.trim()
+                )
+            } else if !plan.policy_summary.is_empty() {
+                format!(
+                    "Approved rules (do not change):\n{}",
+                    plan.policy_summary
+                        .iter()
+                        .map(|line| format!("- {}", line))
+                        .collect::<Vec<String>>()
+                        .join("\n")
+                )
+            } else {
+                "Preserve medical meaning while anonymizing personal information. Default replacement is **** for all PHI unless explicitly overridden by skill or user request.".to_string()
             }
-            return base;
-        }
-        task_input.trim().to_string()
-    }
-
-    fn local_fast_strategy(task_name: &str) -> AnonymizationStrategy {
-        let locked_policy = Self::extract_user_locked_policy(task_name);
-        let base_task = Self::strip_user_locked_policy(task_name);
-        let specific_instructions = if locked_policy.is_empty() {
-            "Preserve medical meaning while anonymizing personal information. Default replacement is **** for all PHI unless explicitly overridden by skill or user request.".to_string()
         } else {
-            format!(
-                "Preserve medical meaning while anonymizing personal information. \
-Follow USER_LOCKED_POLICY strictly and do not change unspecified rules. \
-Default replacement is **** for all PHI unless USER_LOCKED_POLICY explicitly overrides a category.\n{}",
-                locked_policy
-                    .iter()
-                    .map(|line| format!("- {}", line))
-                    .collect::<Vec<String>>()
-                    .join("\n")
-            )
+            "Preserve medical meaning while anonymizing personal information. Default replacement is **** for all PHI unless explicitly overridden by skill or user request.".to_string()
         };
 
         AnonymizationStrategy {
             task_context: if base_task.trim().is_empty() {
                 "Medical Case Study".to_string()
             } else {
-                base_task
+                base_task.to_string()
             },
             focus_areas: vec![
                 "Patient Names".to_string(),
@@ -264,9 +242,10 @@ Default replacement is **** for all PHI unless USER_LOCKED_POLICY explicitly ove
         &self,
         task_name: &str,
         _matching_skills: &[&crate::domain::skills::LoadedSkill],
+        execution_plan: Option<&crate::domain::model::BulkExecutionPlan>,
     ) -> Result<AnonymizationStrategy, String> {
         // Unified strategy path for all providers to keep behavior consistent.
-        Ok(Self::local_fast_strategy(task_name))
+        Ok(Self::local_fast_strategy(task_name, execution_plan))
     }
 
     /// Step 1: Planner Agent
@@ -413,6 +392,7 @@ Default replacement is **** for all PHI unless USER_LOCKED_POLICY explicitly ove
         app: &AppHandle,
         text: &str,
         user_task_input: &str,
+        execution_plan: Option<&crate::domain::model::BulkExecutionPlan>,
     ) -> Result<AnonPlan, String> {
         // 0. Find matching skills based on user input
         let matching_skills = find_matching_skills(user_task_input);
@@ -438,7 +418,7 @@ Default replacement is **** for all PHI unless USER_LOCKED_POLICY explicitly ove
                 message: "Unified strategy mode: planner step skipped".to_string(),
             },
         );
-        let strategy = Self::local_fast_strategy(user_task_input);
+        let strategy = Self::local_fast_strategy(user_task_input, execution_plan);
 
         // 2. Execute
         let _ = app.emit(
