@@ -422,7 +422,7 @@ export function EditorPanel({ original = "", modified = "", onModifiedChange, ac
             )}
             {!activeFileName && (
               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                {hasChanges ? "Review Changes" : "Editor"}
+                {hasChanges ? "変更を確認" : "エディタ"}
               </span>
             )}
 
@@ -436,10 +436,10 @@ export function EditorPanel({ original = "", modified = "", onModifiedChange, ac
                       ? "bg-blue-100 text-blue-700 hover:bg-blue-200"
                       : "bg-slate-100 text-slate-500 hover:bg-slate-200"
                   }`}
-                  title={focusModeEnabled ? "Disable Focus Mode" : "Enable Focus Mode"}
+                  title={focusModeEnabled ? "フォーカスモードを無効化" : "フォーカスモードを有効化"}
                 >
                   {focusModeEnabled ? <Eye size={12} /> : <EyeOff size={12} />}
-                  <span>Focus</span>
+                  <span>フォーカス</span>
                 </button>
 
                 {/* Navigation buttons */}
@@ -488,10 +488,10 @@ export function EditorPanel({ original = "", modified = "", onModifiedChange, ac
                     <button
                         onClick={handleCopy}
                         className="flex items-center gap-1 text-xs px-2 py-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 transition-colors"
-                        title="Copy Modified Text"
+                        title="コピー"
                     >
                         <Clipboard size={14} />
-                        <span>Copy</span>
+                        <span>コピー</span>
                     </button>
                   </>
               )}
@@ -500,7 +500,13 @@ export function EditorPanel({ original = "", modified = "", onModifiedChange, ac
 
       {/* Enhanced Progress Bar */}
       {hasChanges && totalBlocks > 0 && (
-        <div className="progress-bar-container shrink-0">
+        <div className="progress-bar-container shrink-0"
+          role="progressbar"
+          aria-valuenow={Math.round(progressPercent)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={`確認進捗: ${completedSteps}/${totalSteps}`}
+        >
           <div
             className={`progress-bar-fill ${
               allComplete ? "complete" : isNPlusOneStep ? "n-plus-one" : "in-progress"

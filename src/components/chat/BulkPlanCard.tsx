@@ -52,7 +52,13 @@ export function BulkPlanCard({ plan, onCommit, isExecuting, progress }: BulkPlan
               <span>処理中...</span>
               <span>{progress.completed}/{progress.total}</span>
             </div>
-            <div className="h-2 bg-muted rounded-full overflow-hidden">
+            <div className="h-2 bg-muted rounded-full overflow-hidden"
+              role="progressbar"
+              aria-valuenow={progressPercent}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label={`処理進捗: ${progress.completed}/${progress.total}`}
+            >
               <div
                 className="h-full bg-blue-500 transition-all"
                 style={{ width: `${progressPercent}%` }}

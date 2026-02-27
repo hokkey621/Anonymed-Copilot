@@ -56,7 +56,7 @@ export function MenuBar({
           className={`px-3 py-1 rounded-sm hover:bg-muted transition-colors ${openMenu === "file" ? "bg-muted" : ""}`}
           onClick={() => handleMenuClick("file")}
         >
-          File
+          ファイル
         </button>
         {openMenu === "file" && (
           <div className="absolute top-full left-0 mt-0.5 w-56 bg-popover border rounded-md shadow-lg py-1 z-50">
@@ -117,7 +117,7 @@ export function MenuBar({
           className={`px-3 py-1 rounded-sm hover:bg-muted transition-colors ${openMenu === "edit" ? "bg-muted" : ""}`}
           onClick={() => handleMenuClick("edit")}
         >
-          Edit
+          編集
         </button>
         {openMenu === "edit" && (
           <div className="absolute top-full left-0 mt-0.5 w-48 bg-popover border rounded-md shadow-lg py-1 z-50">
@@ -135,7 +135,7 @@ export function MenuBar({
           onClick={() => handleMenuClick("settings")}
         >
           <Settings size={14} className="inline mr-1" />
-          Settings
+          設定
         </button>
         {openMenu === "settings" && (
           <div className="absolute top-full left-0 mt-0.5 w-56 bg-popover border rounded-md shadow-lg py-1 z-50">
