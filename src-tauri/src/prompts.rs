@@ -9,8 +9,6 @@ pub const AGENT_BASE_PROMPT: &str = include_str!("../prompts/agent_base_prompt.m
 const BULK_EXECUTION_SUFFIX: &str = include_str!("../prompts/bulk_execution_suffix.md");
 const EDITOR_CONTEXT_SUFFIX: &str = include_str!("../prompts/editor_context_suffix.md");
 const STRATEGY_PLANNER_PROMPT: &str = include_str!("../prompts/strategy_planner_system_prompt.md");
-const STRATEGY_EXECUTOR_PROMPT: &str =
-    include_str!("../prompts/strategy_executor_system_prompt.md");
 const STRATEGY_EXECUTOR_LOCAL_FAST_PROMPT: &str =
     include_str!("../prompts/strategy_executor_local_fast_system_prompt.md");
 
@@ -43,20 +41,6 @@ pub fn strategy_planner_prompt() -> &'static str {
     STRATEGY_PLANNER_PROMPT
 }
 
-/// Executor prompt for anonymization replacement extraction
-pub fn strategy_executor_prompt(
-    task_context: &str,
-    date_handling: &str,
-    name_handling: &str,
-    specific_instructions: &str,
-) -> String {
-    STRATEGY_EXECUTOR_PROMPT
-        .replace("{{task_context}}", task_context)
-        .replace("{{date_handling}}", date_handling)
-        .replace("{{name_handling}}", name_handling)
-        .replace("{{specific_instructions}}", specific_instructions)
-}
-
 /// Executor prompt specialized for local Gemma fast mode
 pub fn strategy_executor_local_fast_prompt(
     task_context: &str,
@@ -74,11 +58,13 @@ pub fn strategy_executor_local_fast_prompt(
 /// Default anonymization policy summary
 pub fn default_policy_summary() -> Vec<String> {
     vec![
-        "氏名 → 削除".to_string(),
-        "年齢 → 5歳刻み".to_string(),
-        "日付 → 月単位".to_string(),
-        "住所 → 都道府県のみ".to_string(),
-        "病名 → 一般化".to_string(),
+        "患者本人の氏名 → **** で置換".to_string(),
+        "医療従事者・家族・関係者の氏名 → **** で置換".to_string(),
+        "病院/診療所/施設の固有名詞 → **** で置換".to_string(),
+        "地名・住所の固有名詞 → **** で置換".to_string(),
+        "具体的な日付・時刻・和暦表現 → **** で置換".to_string(),
+        "年齢表現 → **** で置換".to_string(),
+        "電話番号・個人番号（マイナンバー等） → **** で置換".to_string(),
     ]
 }
 

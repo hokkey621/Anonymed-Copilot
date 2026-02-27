@@ -24,7 +24,7 @@ export function BulkPlanCard({ plan, onCommit, isExecuting, progress }: BulkPlan
       <div className="px-3 py-2 border-b bg-muted/50 flex items-center justify-between">
         <span className="font-medium">確認と実行</span>
         <span className="text-xs text-muted-foreground">
-          {plan.targetCount} ファイル · 約{estimatedSeconds}秒
+          {plan.targetCount} ファイル · 約{estimatedSeconds}秒 · v{plan.planVersion ?? 1}
         </span>
       </div>
 
@@ -34,7 +34,7 @@ export function BulkPlanCard({ plan, onCommit, isExecuting, progress }: BulkPlan
           <div className="text-xs font-medium text-muted-foreground">匿名化ルール</div>
           {normalizedPolicies.length > 0 ? (
             <div className="space-y-1">
-              {normalizedPolicies.slice(0, 6).map((line, idx) => (
+              {normalizedPolicies.map((line, idx) => (
                 <div key={`${line}-${idx}`} className="text-xs leading-relaxed">
                   • {line}
                 </div>

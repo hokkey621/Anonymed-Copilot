@@ -4,6 +4,7 @@ use crate::domain::skills::{build_prompt_with_skills, find_matching_skills, get_
 use crate::infrastructure::llm::{LlmClient, LlmMessage, ModelProvider};
 use crate::state::CancellationState;
 use crate::utils::plan_apply::apply_plan_to_text;
+use sha2::{Digest, Sha256};
 use tauri::{Emitter, State};
 use zeroize::Zeroize;
 
@@ -63,15 +64,14 @@ pub async fn chat_with_ai(
 }
 
 use crate::domain::model::{BulkExecutionPlan, WorkflowStep};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::commands::chat_intent::{
     detect_purpose_in_text, detect_revision_intent, detect_rule_tuning_intent,
     infer_interaction_category, InteractionCategory,
 };
 use crate::commands::chat_planning::{
-    extract_summary_from_ai_response, infer_purpose_label, plan_reason_for_purpose,
-    policy_summary_for_purpose, should_force_plan_from_response,
+    infer_purpose_label, plan_reason_for_purpose, should_force_plan_from_response,
 };
 use crate::commands::chat_state::{
     generate_contextual_suggestions, guidance_message_for_category, infer_next_state,
@@ -90,6 +90,73 @@ pub struct AgentChatResponse {
     pub next_state: ChatPhase,
     pub state_reason: String,
     pub applied_skills: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct PlanRevisionOutput {
+    locked_plan_text: String,
+}
+
+fn build_locked_plan_text(policy_summary: &[String]) -> String {
+    let mut lines = vec![
+        "初期計画: 患者本人の氏名、医療従事者・家族・関係者の氏名、病院/診療所/施設の固有名詞、地名・住所の固有名詞、具体的なカレンダー日付・時刻・和暦を含む日付表現、年齢表現、電話番号やマイナンバーなどの個人番号をアスタリスク（****）で置換する。".to_string(),
+        "優先順位: ユーザー編集 > skill 指示 > 初期計画。".to_string(),
+    ];
+    for rule in policy_summary {
+        let trimmed = rule.trim();
+        if !trimmed.is_empty() {
+            lines.push(format!("- {}", trimmed));
+        }
+    }
+    lines.join("\n")
+}
+
+fn normalize_policy_summary(policy_summary: &[String]) -> Vec<String> {
+    policy_summary
+        .iter()
+        .map(|line| line.trim().trim_start_matches('-').trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect()
+}
+
+fn extract_policy_summary_from_locked_plan(locked_plan_text: &str) -> Vec<String> {
+    let extracted: Vec<String> = locked_plan_text
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| {
+            if line.starts_with("- ") {
+                Some(line.trim_start_matches("- ").trim().to_string())
+            } else {
+                None
+            }
+        })
+        .filter(|line| !line.is_empty())
+        .collect();
+
+    if extracted.is_empty() {
+        crate::prompts::default_policy_summary()
+    } else {
+        extracted
+    }
+}
+
+fn hash_plan_text(plan_text: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(plan_text.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+fn build_bulk_plan(target_count: usize, estimated_time_ms: u64, policy_summary: Vec<String>) -> BulkExecutionPlan {
+    let normalized = normalize_policy_summary(&policy_summary);
+    let locked_plan_text = build_locked_plan_text(&normalized);
+    BulkExecutionPlan {
+        target_count,
+        estimated_time_ms,
+        policy_summary: normalized,
+        plan_version: 1,
+        plan_hash: hash_plan_text(&locked_plan_text),
+        locked_plan_text,
+    }
 }
 
 /// Check if the user message indicates bulk execution intent
@@ -119,6 +186,88 @@ fn detect_planning_intent(messages: &[ChatMessage]) -> bool {
         return crate::commands::chat_intent::detect_planning_intent_text(&last_user_msg.content);
     }
     false
+}
+
+fn compose_plan_policy_summary(matching_skills: &[&crate::domain::skills::LoadedSkill], user_input: &str) -> Vec<String> {
+    let _ = user_input;
+    let mut summary = crate::prompts::default_policy_summary();
+    let skill_summary = crate::domain::skills::get_skill_policy_summary(matching_skills);
+
+    for item in skill_summary {
+        let category = item
+            .split('→')
+            .next()
+            .map(str::trim)
+            .unwrap_or("");
+
+        let mapped_keyword = match category {
+            "氏名" => Some("氏名"),
+            "年齢" => Some("年齢"),
+            "生年月日" => Some("日付"),
+            "住所" => Some("住所"),
+            "電話番号" => Some("電話番号"),
+            "個人番号" => Some("個人番号"),
+            "治験施設名" => Some("病院/診療所/施設"),
+            _ => None,
+        };
+
+        if let Some(keyword) = mapped_keyword {
+            if let Some(index) = summary.iter().position(|line| line.contains(keyword)) {
+                summary[index] = item.clone();
+                continue;
+            }
+        }
+
+        if !summary.iter().any(|existing| existing == &item) {
+            summary.push(item);
+        }
+    }
+    summary
+}
+
+#[tauri::command]
+pub async fn revise_bulk_plan(
+    app: tauri::AppHandle,
+    plan: BulkExecutionPlan,
+    user_request: String,
+    provider: Option<ModelProvider>,
+) -> Result<BulkExecutionPlan, String> {
+    let handler = LlmClient::from_app(&app, provider.unwrap_or_default())?;
+
+    let current_locked_plan = if plan.locked_plan_text.trim().is_empty() {
+        build_locked_plan_text(&plan.policy_summary)
+    } else {
+        plan.locked_plan_text.clone()
+    };
+
+    let system_prompt = "You revise anonymization plans in Japanese.\nRules:\n- Keep unchanged parts exactly unless requested.\n- Default replacement policy must remain mask with **** for PHI.\n- Only change replacement method when user explicitly asks, or when the current plan already states a skill-specific exception.\n- Preserve policy priority: user edits > skill instructions > default plan.\n- Return JSON only.";
+
+    let user_prompt = format!(
+        "Current plan:\n{}\n\nUser edit request:\n{}\n\nReturn JSON:\n{{\"locked_plan_text\":\"...\"}}",
+        current_locked_plan, user_request
+    );
+
+    let revised = handler
+        .generate_structure::<PlanRevisionOutput>(&user_prompt, system_prompt, None)
+        .await?;
+
+    let locked_plan_text = revised.locked_plan_text.trim().to_string();
+    if locked_plan_text.is_empty() {
+        return Err("編集後の計画が空です。もう一度具体的に指示してください。".to_string());
+    }
+
+    let policy_summary = extract_policy_summary_from_locked_plan(&locked_plan_text);
+    let plan_hash = hash_plan_text(&locked_plan_text);
+    let next_version = plan.plan_version.saturating_add(1);
+
+    Ok(BulkExecutionPlan {
+        target_count: plan.target_count,
+        estimated_time_ms: plan.estimated_time_ms,
+        policy_summary,
+        locked_plan_text,
+        plan_version: next_version,
+        plan_hash,
+    })
 }
 
 /// Enhanced agent chat that supports bulk execution planning
@@ -176,17 +325,8 @@ pub async fn agent_chat(
 
     if category == InteractionCategory::PlanCreation && file_count > 0 {
         let effective_count = file_count;
-        let skill_summary = crate::domain::skills::get_skill_policy_summary(&matching_skills);
-        let policy_summary = if !skill_summary.is_empty() {
-            skill_summary
-        } else {
-            policy_summary_for_purpose(last_user_message)
-        };
-        let bulk_plan = BulkExecutionPlan {
-            target_count: effective_count,
-            estimated_time_ms: (effective_count as u64) * 50,
-            policy_summary,
-        };
+        let policy_summary = compose_plan_policy_summary(&matching_skills, last_user_message);
+        let bulk_plan = build_bulk_plan(effective_count, (effective_count as u64) * 50, policy_summary);
         let workflow_steps = prompts::default_workflow_steps(effective_count > 1);
         let next_state = ChatPhase::PlanPresented;
         let suggestions = prompts::plan_created_suggestions();
@@ -258,11 +398,7 @@ pub async fn agent_chat(
         let effective_count = if file_count > 0 { file_count } else { 1 };
         let estimated_time = (effective_count as u64) * 50;
 
-        let plan = BulkExecutionPlan {
-            target_count: effective_count,
-            estimated_time_ms: estimated_time,
-            policy_summary: prompts::default_policy_summary(),
-        };
+        let plan = build_bulk_plan(effective_count, estimated_time, prompts::default_policy_summary());
 
         let steps = prompts::default_workflow_steps(effective_count > 1);
 
@@ -273,17 +409,12 @@ pub async fn agent_chat(
 
     if bulk_plan.is_none() && should_force_plan_from_response(category, file_count, &ai_response) {
         let effective_count = if file_count > 0 { file_count } else { 1 };
-        let skill_summary = crate::domain::skills::get_skill_policy_summary(&matching_skills);
-        let policy_summary = if !skill_summary.is_empty() {
-            skill_summary
-        } else {
-            policy_summary_for_purpose(last_user_message)
-        };
-        bulk_plan = Some(BulkExecutionPlan {
-            target_count: effective_count,
-            estimated_time_ms: (effective_count as u64) * 50,
+        let policy_summary = compose_plan_policy_summary(&matching_skills, last_user_message);
+        bulk_plan = Some(build_bulk_plan(
+            effective_count,
+            (effective_count as u64) * 50,
             policy_summary,
-        });
+        ));
         workflow_steps = Some(prompts::default_workflow_steps(effective_count > 1));
     }
 
@@ -378,17 +509,12 @@ pub async fn agent_chat_streaming(
             }),
         );
         let effective_count = file_count;
-        let skill_summary = crate::domain::skills::get_skill_policy_summary(&matching_skills);
-        let policy_summary = if !skill_summary.is_empty() {
-            skill_summary
-        } else {
-            policy_summary_for_purpose(last_user_message)
-        };
-        let bulk_plan = BulkExecutionPlan {
-            target_count: effective_count,
-            estimated_time_ms: (effective_count as u64) * 10000,
+        let policy_summary = compose_plan_policy_summary(&matching_skills, last_user_message);
+        let bulk_plan = build_bulk_plan(
+            effective_count,
+            (effective_count as u64) * 10000,
             policy_summary,
-        };
+        );
         let workflow_steps = prompts::default_workflow_steps(effective_count > 1);
         let next_state = ChatPhase::PlanPresented;
         let suggestions = prompts::plan_created_suggestions();
@@ -515,23 +641,9 @@ pub async fn agent_chat_streaming(
         // Estimate 10 seconds per file for LLM processing + overhead
         let estimated_time = (effective_count as u64) * 10000;
 
-        let extracted_summary = extract_summary_from_ai_response(&ai_response);
+        let policy_summary = compose_plan_policy_summary(&matching_skills, last_user_message);
 
-        // Priority: 1. Skill-based summary, 2. AI extracted, 3. Default
-        let skill_summary = crate::domain::skills::get_skill_policy_summary(&matching_skills);
-        let policy_summary = if !skill_summary.is_empty() {
-            skill_summary
-        } else if !extracted_summary.is_empty() {
-            extracted_summary
-        } else {
-            prompts::default_policy_summary()
-        };
-
-        let plan = BulkExecutionPlan {
-            target_count: effective_count,
-            estimated_time_ms: estimated_time,
-            policy_summary,
-        };
+        let plan = build_bulk_plan(effective_count, estimated_time, policy_summary);
 
         let steps = prompts::default_workflow_steps(effective_count > 1);
 
@@ -542,17 +654,12 @@ pub async fn agent_chat_streaming(
 
     if bulk_plan.is_none() && should_force_plan_from_response(category, file_count, &ai_response) {
         let effective_count = if file_count > 0 { file_count } else { 1 };
-        let skill_summary = crate::domain::skills::get_skill_policy_summary(&matching_skills);
-        let policy_summary = if !skill_summary.is_empty() {
-            skill_summary
-        } else {
-            policy_summary_for_purpose(last_user_message)
-        };
-        bulk_plan = Some(BulkExecutionPlan {
-            target_count: effective_count,
-            estimated_time_ms: (effective_count as u64) * 10000,
+        let policy_summary = compose_plan_policy_summary(&matching_skills, last_user_message);
+        bulk_plan = Some(build_bulk_plan(
+            effective_count,
+            (effective_count as u64) * 10000,
             policy_summary,
-        });
+        ));
         workflow_steps = Some(prompts::default_workflow_steps(effective_count > 1));
     }
 

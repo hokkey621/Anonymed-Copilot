@@ -14,6 +14,9 @@ export interface BulkExecutionPlan {
   targetCount: number;
   estimatedTimeMs: number;
   policySummary: string[];
+  lockedPlanText?: string;
+  planVersion?: number;
+  planHash?: string;
 }
 
 export interface WorkflowStep {

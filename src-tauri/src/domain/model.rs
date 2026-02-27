@@ -70,6 +70,16 @@ pub struct BulkExecutionPlan {
     pub target_count: usize,
     pub estimated_time_ms: u64,
     pub policy_summary: Vec<String>,
+    #[serde(default)]
+    pub locked_plan_text: String,
+    #[serde(default = "default_plan_version")]
+    pub plan_version: u32,
+    #[serde(default)]
+    pub plan_hash: String,
+}
+
+fn default_plan_version() -> u32 {
+    1
 }
 
 /// Individual step in a workflow

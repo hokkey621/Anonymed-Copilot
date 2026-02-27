@@ -108,89 +108,27 @@ export const buildExecutionTaskContext = (
   taskContext: string,
   activeBulkPlan: BulkExecutionPlan | null,
 ): string => {
-  if (!activeBulkPlan || !activeBulkPlan.policySummary || activeBulkPlan.policySummary.length === 0) {
+  if (!activeBulkPlan) {
     return taskContext;
   }
-  const policyLines = activeBulkPlan.policySummary
+
+  const lockedPlan = (activeBulkPlan.lockedPlanText || "").trim();
+  const policyLines = (activeBulkPlan.policySummary || [])
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
     .map((line) => `- ${line}`)
     .join("\n");
-  return `${taskContext}\n\n[USER_LOCKED_POLICY]\n${policyLines}\n[/USER_LOCKED_POLICY]`;
+
+  const planBody = lockedPlan.length > 0 ? lockedPlan : policyLines;
+  if (!planBody) {
+    return taskContext;
+  }
+
+  return `${taskContext}\n\n[USER_LOCKED_POLICY]\n${planBody}\n[/USER_LOCKED_POLICY]`;
 };
 
 export const isPartialPlanEditIntent = (text: string): boolean => {
   return /年齢|日付|氏名|名前|住所|地名|病名|疾患|ルール|だけ|のみ/i.test(text);
-};
-
-const updateRuleLine = (
-  lines: string[],
-  keyword: string,
-  nextLine: string,
-): { next: string[]; changed: boolean } => {
-  const index = lines.findIndex((line) => line.includes(keyword));
-  if (index >= 0) {
-    if (lines[index] === nextLine) return { next: lines, changed: false };
-    const next = [...lines];
-    next[index] = nextLine;
-    return { next, changed: true };
-  }
-  return { next: [...lines, nextLine], changed: true };
-};
-
-export const applyPartialPlanEdit = (
-  plan: BulkExecutionPlan,
-  text: string,
-): { plan: BulkExecutionPlan; changedRules: string[] } => {
-  let summary = [...(plan.policySummary || [])];
-  const changedRules: string[] = [];
-
-  if (/年齢/i.test(text)) {
-    const next = /五歳|5歳|5 歳|5才|５歳/.test(text) ? "年齢 → 5歳刻みへ一般化" : "年齢 → 年代へ一般化";
-    const res = updateRuleLine(summary, "年齢", next);
-    summary = res.next;
-    if (res.changed) changedRules.push("年齢");
-  }
-
-  if (/日付/i.test(text)) {
-    const next = /年月|月単位/.test(text)
-      ? "日付 → 年月のみへ一般化"
-      : /相対|経過/.test(text)
-        ? "日付 → 相対日付へ置換"
-        : "日付 → 月単位へ一般化";
-    const res = updateRuleLine(summary, "日付", next);
-    summary = res.next;
-    if (res.changed) changedRules.push("日付");
-  }
-
-  if (/氏名|名前/i.test(text)) {
-    const next = /仮名|疑似|置換/.test(text) ? "氏名 → 仮名へ置換" : "氏名 → 完全削除";
-    const res = updateRuleLine(summary, "氏名", next);
-    summary = res.next;
-    if (res.changed) changedRules.push("氏名");
-  }
-
-  if (/住所|地名|地域/i.test(text)) {
-    const next = /都道府県/.test(text) ? "住所 → 都道府県レベルへ一般化" : "住所 → 広域へ一般化";
-    const res = updateRuleLine(summary, "住所", next);
-    summary = res.next;
-    if (res.changed) changedRules.push("住所");
-  }
-
-  if (/病名|疾患/i.test(text)) {
-    const next = /そのまま|保持/.test(text) ? "病名 → そのまま保持" : "病名 → 一般化";
-    const res = updateRuleLine(summary, "病名", next);
-    summary = res.next;
-    if (res.changed) changedRules.push("病名");
-  }
-
-  return {
-    plan: {
-      ...plan,
-      policySummary: summary,
-    },
-    changedRules,
-  };
 };
 
 export const namesFromPath = (paths: string[]) =>

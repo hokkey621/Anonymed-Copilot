@@ -17,7 +17,6 @@ import {
   PLAN_FLOW_PHASES,
 } from "./chat/constants";
 import {
-  applyPartialPlanEdit,
   buildExecutionTaskContext,
   checkNeedsFileContent,
   filterThoughtTags,
@@ -412,18 +411,19 @@ export function ConfigSidebar({
       PLAN_FLOW_PHASES.includes(chatPhase) &&
       isPartialPlanEditIntent(text)
     ) {
-      const { plan: updatedPlan, changedRules } = applyPartialPlanEdit(activeBulkPlan, text);
-      const changed = changedRules.length > 0;
-
-      if (changed) {
+      try {
+        const updatedPlan = await invoke<BulkExecutionPlan>("revise_bulk_plan", {
+          plan: activeBulkPlan,
+          userRequest: text,
+          provider: selectedProvider,
+        });
         setActiveBulkPlan(updatedPlan);
-        const rules = changedRules.join("・");
         replaceActiveThread(
           [
             ...history,
             {
               role: "assistant",
-              content: `${rules}ルールのみ更新しました。他のルールは変更していません。内容を確認して実行してください。`,
+              content: `計画を更新しました（v${updatedPlan.planVersion ?? 1}）。この計画を固定して実行できます。`,
               bulkPlan: updatedPlan,
               suggestions: ["この内容で実行", "一部ルールを修正", "変更点を説明して"],
             },
@@ -431,14 +431,16 @@ export function ConfigSidebar({
           activeSkills,
           "revision",
         );
-      } else {
+      } catch (e) {
+        const message = formatCommandError(e);
+        showErrorPopup(message);
         replaceActiveThread(
           [
             ...history,
             {
               role: "assistant",
-              content: "指定内容に対応するルール変更は見つかりませんでした。変更したい項目（例: 年齢、日付）を具体的に指定してください。",
-              suggestions: ["年齢を5歳刻みにする", "日付を年月のみにする", "氏名を完全削除にする"],
+              content: `計画の編集に失敗しました: ${message}`,
+              suggestions: ["年齢を10歳刻みにする", "日付を年月のみにする", "この内容で実行"],
             },
           ],
           activeSkills,

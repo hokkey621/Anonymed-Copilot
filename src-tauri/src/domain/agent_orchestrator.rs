@@ -91,6 +91,99 @@ impl AgentOrchestrator {
         format!("{}_{:03}", base, index)
     }
 
+    fn allow_non_mask_replacement(category: Option<&str>, instructions: &str) -> bool {
+        let lower = instructions.to_lowercase();
+        let has_user_or_skill_override = lower.contains("user_locked_policy")
+            || lower.contains("skill")
+            || lower.contains("特記事項")
+            || lower.contains("置換");
+
+        if !has_user_or_skill_override {
+            return false;
+        }
+
+        match category.unwrap_or("OTHER") {
+            "AGE" => {
+                lower.contains("10歳刻み")
+                    || lower.contains("5歳刻み")
+                    || lower.contains("年代")
+                    || lower.contains("年齢") && lower.contains("一般化")
+            }
+            "DATE" => {
+                lower.contains("相対")
+                    || lower.contains("day ")
+                    || lower.contains("visit")
+                    || lower.contains("年月")
+                    || lower.contains("年のみ")
+            }
+            "P_NAME" | "S_NAME" => {
+                lower.contains("subject-")
+                    || lower.contains("仮名")
+                    || lower.contains("replace_tag")
+                    || lower.contains("pseudonym")
+                    || lower.contains("タグ")
+            }
+            "LOC" | "HOSP" => {
+                lower.contains("都道府県")
+                    || lower.contains("地方")
+                    || lower.contains("施設a")
+                    || lower.contains("施設b")
+                    || lower.contains("一般化")
+            }
+            "ID" | "PHONE" | "EMAIL" => {
+                lower.contains("トークン")
+                    || lower.contains("ハッシュ")
+                    || lower.contains("末尾")
+            }
+            _ => false,
+        }
+    }
+
+    fn has_birth_year_only_override(instructions: &str) -> bool {
+        let lower = instructions.to_lowercase();
+        (lower.contains("生年月日") || lower.contains("dob") || lower.contains("birth"))
+            && (lower.contains("年のみ")
+                || lower.contains("年だけ")
+                || lower.contains("年のみ保持")
+                || lower.contains("年生"))
+    }
+
+    fn is_birthdate_context(full_text: &str, start: usize, end: usize, original: &str) -> bool {
+        if start > full_text.len() || end > full_text.len() || start > end {
+            return false;
+        }
+        let before = full_text[..start]
+            .chars()
+            .rev()
+            .take(16)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect::<String>();
+        let after = full_text[end..].chars().take(16).collect::<String>();
+        let window = format!("{}{}{}", before, original, after).to_lowercase();
+        window.contains("生年月日")
+            || window.contains("生年")
+            || window.contains("dob")
+            || window.contains("birth")
+    }
+
+    fn extract_four_digit_year(value: &str) -> Option<String> {
+        let chars: Vec<char> = value.chars().collect();
+        for i in 0..chars.len().saturating_sub(3) {
+            let slice = &chars[i..i + 4];
+            if slice.iter().all(|c| c.is_ascii_digit()) {
+                let year_str: String = slice.iter().collect();
+                if let Ok(year) = year_str.parse::<u32>() {
+                    if (1800..=2100).contains(&year) {
+                        return Some(year.to_string());
+                    }
+                }
+            }
+        }
+        None
+    }
+
     pub fn new(app: &tauri::AppHandle, provider: ModelProvider) -> Result<Self, String> {
         let handler = LlmClient::from_app(app, provider)?;
         Ok(Self { handler })
@@ -132,11 +225,12 @@ impl AgentOrchestrator {
         let locked_policy = Self::extract_user_locked_policy(task_name);
         let base_task = Self::strip_user_locked_policy(task_name);
         let specific_instructions = if locked_policy.is_empty() {
-            "Preserve medical meaning while anonymizing personal information.".to_string()
+            "Preserve medical meaning while anonymizing personal information. Default replacement is **** for all PHI unless explicitly overridden by skill or user request.".to_string()
         } else {
             format!(
                 "Preserve medical meaning while anonymizing personal information. \
-Follow USER_LOCKED_POLICY strictly and do not change unspecified rules.\n{}",
+Follow USER_LOCKED_POLICY strictly and do not change unspecified rules. \
+Default replacement is **** for all PHI unless USER_LOCKED_POLICY explicitly overrides a category.\n{}",
                 locked_policy
                     .iter()
                     .map(|line| format!("- {}", line))
@@ -253,18 +347,39 @@ Follow USER_LOCKED_POLICY strictly and do not change unspecified rules.\n{}",
         let mut mapped = Vec::new();
 
         for (start, end, original, replacement, category) in indexed {
-            let normalized_replacement = if Self::is_symbolic_placeholder(&replacement) {
-                let category_key = category.clone().unwrap_or_else(|| "ENTITY".to_string());
-                let map_key = (category_key.clone(), original.clone());
-                if let Some(existing) = canonical_by_key.get(&map_key) {
-                    existing.clone()
+            let allow_non_mask =
+                Self::allow_non_mask_replacement(category.as_deref(), &strategy.specific_instructions);
+            let force_birth_year = category.as_deref() == Some("DATE")
+                && allow_non_mask
+                && Self::has_birth_year_only_override(&strategy.specific_instructions)
+                && Self::is_birthdate_context(full_text, start, end, &original);
+
+            let normalized_replacement = if force_birth_year {
+                if let Some(year) = Self::extract_four_digit_year(&original) {
+                    format!("{}年生", year)
+                } else if replacement.trim().is_empty() {
+                    "****".to_string()
                 } else {
-                    let next = category_counters.entry(category_key).or_insert(0);
-                    *next += 1;
-                    let label = Self::canonical_label(category.as_deref(), *next);
-                    canonical_by_key.insert(map_key, label.clone());
-                    label
+                    replacement
                 }
+            } else if Self::is_symbolic_placeholder(&replacement) {
+                if !allow_non_mask {
+                    "****".to_string()
+                } else {
+                    let category_key = category.clone().unwrap_or_else(|| "ENTITY".to_string());
+                    let map_key = (category_key.clone(), original.clone());
+                    if let Some(existing) = canonical_by_key.get(&map_key) {
+                        existing.clone()
+                    } else {
+                        let next = category_counters.entry(category_key).or_insert(0);
+                        *next += 1;
+                        let label = Self::canonical_label(category.as_deref(), *next);
+                        canonical_by_key.insert(map_key, label.clone());
+                        label
+                    }
+                }
+            } else if !allow_non_mask {
+                "****".to_string()
             } else {
                 replacement
             };

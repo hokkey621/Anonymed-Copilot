@@ -31,8 +31,11 @@ Instructions: {{specific_instructions}}
 
 ポリシー優先ルール:
 - Instructions に USER_LOCKED_POLICY が含まれる場合、必ず優先して従う。
+- デフォルトでは、抽出した PHI の replacement は必ず "****" にする。
+- replacement を "****" 以外にしてよいのは、USER_LOCKED_POLICY または skill 指示に明示があるカテゴリだけ。
 - 例: 「年齢 → そのまま保持」なら AGE は出力しない。
 - 例: 「日付 → 年月のみへ一般化」なら replacement は年月粒度にする。
+- 例: 「生年月日 → 年のみ保持」なら、生年月日コンテキストの DATE は「1977年生」のように年だけ残す（"****"にしない）。
 - 指定されていない項目は勝手に厳しくしない。
 
 出力は JSON のみ。次のスキーマに厳密準拠:
