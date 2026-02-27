@@ -405,11 +405,7 @@ export function ConfigSidebar({
       return;
     }
 
-    if (
-      activeBulkPlan &&
-      PLAN_FLOW_PHASES.includes(chatPhase) &&
-      isPartialPlanEditIntent(text)
-    ) {
+    if (activeBulkPlan && isPartialPlanEditIntent(text)) {
       try {
         const updatedPlan = await invoke<BulkExecutionPlan>("revise_bulk_plan", {
           plan: activeBulkPlan,
@@ -439,6 +435,7 @@ export function ConfigSidebar({
             {
               role: "assistant",
               content: `計画の編集に失敗しました: ${message}`,
+              bulkPlan: activeBulkPlan,
               suggestions: ["年齢を10歳刻みにする", "日付を年月のみにする", "この内容で実行"],
             },
           ],
@@ -465,6 +462,10 @@ export function ConfigSidebar({
       });
 
       const nextPhase: ChatPhase = response.nextState ?? chatPhase;
+      const shouldKeepPlanCard =
+        !!activeBulkPlan &&
+        (PLAN_FLOW_PHASES.includes(chatPhase) || PLAN_FLOW_PHASES.includes(nextPhase));
+      const planForMessage = response.bulkPlan || (shouldKeepPlanCard ? activeBulkPlan : null);
 
       const assistantMessage: Message = {
         role: "assistant",
@@ -474,7 +475,7 @@ export function ConfigSidebar({
           streamEndReasonRef.current === "cancelled",
           !!currentContent || selectedFilePaths.length > 0 || fileCount > 0,
         ),
-        bulkPlan: response.bulkPlan || undefined,
+        bulkPlan: planForMessage || undefined,
         workflowSteps: response.workflowSteps || undefined,
         suggestions: response.suggestions || undefined,
       };
@@ -485,8 +486,8 @@ export function ConfigSidebar({
         nextPhase,
       );
 
-      if (response.bulkPlan) {
-        setActiveBulkPlan(response.bulkPlan);
+      if (planForMessage) {
+        setActiveBulkPlan(planForMessage);
       }
 
       const lowerInput = text.toLowerCase();

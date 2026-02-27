@@ -111,12 +111,70 @@ fn build_locked_plan_text(policy_summary: &[String]) -> String {
     lines.join("\n")
 }
 
+fn infer_policy_category_key(line: &str) -> Option<&'static str> {
+    let normalized = line
+        .to_lowercase()
+        .replace('（', "(")
+        .replace('）', ")");
+
+    if normalized.contains("医療従事者") || normalized.contains("家族") || normalized.contains("関係者") {
+        return Some("staff_related_name");
+    }
+    if normalized.contains("患者本人") && normalized.contains("氏名") {
+        return Some("patient_name");
+    }
+    if normalized.contains("氏名") || normalized.contains("名前") {
+        return Some("patient_name");
+    }
+    if normalized.contains("病院") || normalized.contains("診療所") || normalized.contains("施設") || normalized.contains("病院名") {
+        return Some("facility_name");
+    }
+    if normalized.contains("地名") || normalized.contains("住所") || normalized.contains("地域") {
+        return Some("location");
+    }
+    if normalized.contains("生年月日") {
+        return Some("date");
+    }
+    if normalized.contains("日付") || normalized.contains("時刻") || normalized.contains("和暦") {
+        return Some("date");
+    }
+    if normalized.contains("年齢") {
+        return Some("age");
+    }
+    if normalized.contains("電話番号") {
+        return Some("phone_or_id");
+    }
+    if normalized.contains("個人番号") || normalized.contains("マイナンバー") {
+        return Some("phone_or_id");
+    }
+    None
+}
+
 fn normalize_policy_summary(policy_summary: &[String]) -> Vec<String> {
-    policy_summary
-        .iter()
-        .map(|line| line.trim().trim_start_matches('-').trim().to_string())
-        .filter(|line| !line.is_empty())
-        .collect()
+    let mut normalized: Vec<String> = Vec::new();
+
+    for line in policy_summary {
+        let cleaned = line.trim().trim_start_matches('-').trim().to_string();
+        if cleaned.is_empty() {
+            continue;
+        }
+
+        if let Some(key) = infer_policy_category_key(&cleaned) {
+            if let Some(index) = normalized
+                .iter()
+                .position(|existing| infer_policy_category_key(existing.as_str()) == Some(key))
+            {
+                normalized[index] = cleaned;
+                continue;
+            }
+        }
+
+        if !normalized.iter().any(|existing| existing.as_str() == cleaned.as_str()) {
+            normalized.push(cleaned);
+        }
+    }
+
+    normalized
 }
 
 fn extract_policy_summary_from_locked_plan(locked_plan_text: &str) -> Vec<String> {
@@ -208,25 +266,11 @@ fn compose_plan_policy_summary(matching_skills: &[&crate::domain::skills::Loaded
     let skill_summary = crate::domain::skills::get_skill_policy_summary(matching_skills);
 
     for item in skill_summary {
-        let category = item
-            .split('→')
-            .next()
-            .map(str::trim)
-            .unwrap_or("");
-
-        let mapped_keyword = match category {
-            "氏名" => Some("氏名"),
-            "年齢" => Some("年齢"),
-            "生年月日" => Some("日付"),
-            "住所" => Some("住所"),
-            "電話番号" => Some("電話番号"),
-            "個人番号" => Some("個人番号"),
-            "治験施設名" => Some("病院/診療所/施設"),
-            _ => None,
-        };
-
-        if let Some(keyword) = mapped_keyword {
-            if let Some(index) = summary.iter().position(|line| line.contains(keyword)) {
+        if let Some(key) = infer_policy_category_key(&item) {
+            if let Some(index) = summary
+                .iter()
+                .position(|line| infer_policy_category_key(line) == Some(key))
+            {
                 summary[index] = item.clone();
                 continue;
             }
@@ -236,7 +280,7 @@ fn compose_plan_policy_summary(matching_skills: &[&crate::domain::skills::Loaded
             summary.push(item);
         }
     }
-    summary
+    normalize_policy_summary(&summary)
 }
 
 #[tauri::command]
