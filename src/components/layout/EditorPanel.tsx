@@ -355,10 +355,17 @@ export function EditorPanel({ original = "", modified = "", onModifiedChange, ac
       // Hide line numbers on the original (left) editor
       const originalEditor = editor.getOriginalEditor();
       originalEditorRef.current = originalEditor;
-      originalEditor.updateOptions({ lineNumbers: 'off' });
+      originalEditor.updateOptions({
+        lineNumbers: 'off',
+        wordWrap: 'off',
+      });
 
       const modifiedEditor = editor.getModifiedEditor();
       modifiedEditorRef.current = modifiedEditor;
+      modifiedEditor.updateOptions({
+        wordWrap: 'on',
+        wrappingStrategy: 'advanced',
+      });
 
       modifiedEditor.onDidChangeModelContent(() => {
           if (onModifiedChange) {
@@ -567,6 +574,7 @@ export function EditorPanel({ original = "", modified = "", onModifiedChange, ac
                 scrollBeyondLastLine: false,
                 originalEditable: false,
                 fontSize: 18,
+            diffWordWrap: "on",
             }}
             originalModelPath="original"
             modifiedModelPath="modified"
