@@ -158,33 +158,37 @@ export function ConfigSidebar({
   };
 
   useEffect(() => {
+    const freshThread = createThread(INITIAL_ASSISTANT_MESSAGE);
+
     try {
       const parsed = loadThreads();
       if (parsed && Array.isArray(parsed.threads) && parsed.threads.length > 0) {
-          const hydratedThreads = clampThreads(parsed.threads).map((thread) => ({
-            ...thread,
-            chatPhase: (thread.chatPhase ?? "discovery") as ChatPhase,
-          }));
-          const initialActiveId = parsed.activeThreadId || hydratedThreads[0].id;
-          const initialThread = hydratedThreads.find((t) => t.id === initialActiveId) ?? hydratedThreads[0];
-          setThreads(hydratedThreads);
-          setActiveThreadId(initialThread.id);
-          setMessages(initialThread.messages.length > 0 ? initialThread.messages : [INITIAL_ASSISTANT_MESSAGE]);
-          setActiveSkills(initialThread.activeSkills ?? []);
-          setChatPhase(initialThread.chatPhase ?? "discovery");
+          const hydratedThreads = clampThreads(parsed.threads)
+            .map((thread) => ({
+              ...thread,
+              chatPhase: (thread.chatPhase ?? "discovery") as ChatPhase,
+            }))
+            .filter((thread) => thread.id !== freshThread.id);
+
+          const nextThreads = clampThreads([freshThread, ...hydratedThreads]);
+          setThreads(nextThreads);
+          setActiveThreadId(freshThread.id);
+          setMessages(freshThread.messages);
+          setActiveSkills(freshThread.activeSkills);
+          setChatPhase(freshThread.chatPhase);
+          persistThreads(nextThreads, freshThread.id);
           return;
       }
     } catch (e) {
       console.warn("Failed to load chat history:", e);
     }
 
-    const thread = createThread(INITIAL_ASSISTANT_MESSAGE);
-    setThreads([thread]);
-    setActiveThreadId(thread.id);
-    setMessages(thread.messages);
-    setActiveSkills(thread.activeSkills);
+    setThreads([freshThread]);
+    setActiveThreadId(freshThread.id);
+    setMessages(freshThread.messages);
+    setActiveSkills(freshThread.activeSkills);
     setChatPhase("discovery");
-    persistThreads([thread], thread.id);
+    persistThreads([freshThread], freshThread.id);
   }, []);
 
   useEffect(() => {
