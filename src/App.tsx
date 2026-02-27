@@ -1,9 +1,12 @@
 import { MainLayout } from "@/components/layout/MainLayout";
+import { ToastProvider } from "@/components/ui/Toast";
 import "./App.css";
 
 function App() {
   return (
-    <MainLayout />
+    <ToastProvider>
+      <MainLayout />
+    </ToastProvider>
   );
 }
 

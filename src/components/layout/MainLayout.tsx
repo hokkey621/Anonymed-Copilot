@@ -12,6 +12,7 @@ import { StatusBar } from "./StatusBar";
 import { EditorTabs } from "@/components/editor/EditorTabs";
 import { ResizablePanel } from "@/components/ui/ResizablePanel";
 import { ApiKeyModal } from "@/components/ui/ApiKeyModal";
+import { useToast } from "@/components/ui/Toast";
 
 interface OpenFileResult {
   path: string;
@@ -75,6 +76,7 @@ interface BulkAnalysisProgressEvent {
 }
 
 export function MainLayout() {
+  const { showToast } = useToast();
   const [originalContent, setOriginalContent] = useState<string>("");
   const [anonymizedContent, setAnonymizedContent] = useState<string>("");
   const [currentPlan, setCurrentPlan] = useState<AnonPlan>(createDefaultPlan());
@@ -313,7 +315,7 @@ export function MainLayout() {
       if (result) {
         console.info("[UI] File saved:", result.savedPath);
         console.info("[UI] Audit log:", result.auditLogPath);
-        alert(`保存しました:\n${result.savedPath}`);
+        showToast(`保存しました:\n${result.savedPath}`, "success");
         // Mark as no changes
         setOpenedFiles(prev =>
           prev.map(f => f.path === activeFilePath ? { ...f, hasChanges: false } : f)
@@ -372,7 +374,7 @@ export function MainLayout() {
     } catch (e) {
         console.error("[UI] Anonymization failed:", e);
         const message = formatError(e);
-        alert(message);
+        showToast(message, "error", 6000);
         if (message.includes("APIキー")) {
           setShowApiKeyModal(true);
         }
@@ -406,7 +408,7 @@ export function MainLayout() {
             if (result) {
               console.info("[UI] File saved:", result.savedPath);
               console.info("[UI] Audit log:", result.auditLogPath);
-              alert(`保存しました:\n${result.savedPath}`);
+              showToast(`保存しました:\n${result.savedPath}`, "success");
               // Mark as no changes
               setOpenedFiles(prev =>
                 prev.map(f => f.path === activeFilePath ? { ...f, hasChanges: false } : f)
@@ -467,34 +469,37 @@ export function MainLayout() {
       // Check if we have any valid results
       if (validResults.length === 0) {
         if (wasCancelled) {
-          alert("解析を停止しました。");
+          showToast("解析を停止しました。", "info");
           return;
         }
         console.error("[Bulk Review] No files were successfully analyzed!", analysisFailures);
         if (analysisFailures.length > 0) {
-          alert(
+          showToast(
             `すべてのファイル解析に失敗しました:\n${analysisFailures
               .map(f => `- ${f.fileName}: ${f.error}`)
-              .join("\n")}`
+              .join("\n")}`,
+            "error", 8000
           );
         } else {
-          alert("エラー: ファイルの分析に失敗しました。コンソールログを確認してください。");
+          showToast("エラー: ファイルの分析に失敗しました。コンソールログを確認してください。", "error", 6000);
         }
         return;
       }
 
       if (analysisFailures.length > 0) {
         console.warn("[Bulk Review] Analysis failures:", analysisFailures);
-        alert(
+        showToast(
           `解析に失敗したファイルがあります:\n${analysisFailures
             .map(f => `- ${f.fileName}: ${f.error}`)
-            .join("\n")}`
+            .join("\n")}`,
+          "error", 8000
         );
       }
 
       if (wasCancelled) {
-        alert(
-          `解析を停止しました。完了済み ${validResults.length} 件のみレビューします。`
+        showToast(
+          `解析を停止しました。完了済み ${validResults.length} 件のみレビューします。`,
+          "info", 5000
         );
       }
 
@@ -518,7 +523,7 @@ export function MainLayout() {
       }
     } catch (e) {
       console.error("Bulk analysis failed:", e);
-      alert(`解析に失敗しました: ${formatError(e)}`);
+      showToast(`解析に失敗しました: ${formatError(e)}`, "error", 6000);
     } finally {
       setBulkAnalysisProgress(prev => ({ ...prev, isAnalyzing: false }));
       setIsProcessing(false);
@@ -645,7 +650,7 @@ export function MainLayout() {
       return null;
     } catch (e) {
       console.error("Bulk save failed:", e);
-      alert(`保存に失敗しました: ${e}`);
+      showToast(`保存に失敗しました: ${e}`, "error", 6000);
       return null;
     }
   };
