@@ -8,7 +8,6 @@ keywords:
   - 臨床試験
   - clinical
   - trial
-  - 有害事象
   - adverse
   - 接種
   - 投与

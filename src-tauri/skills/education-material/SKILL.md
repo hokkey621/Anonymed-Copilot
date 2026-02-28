@@ -12,8 +12,6 @@ keywords:
   - education
   - teaching
   - training
-  - 学ぶ
-  - 勉強
 ---
 
 # 教材作成用匿名化ガイド
