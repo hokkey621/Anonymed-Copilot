@@ -573,7 +573,7 @@ export function EditorPanel({ original = "", modified = "", onModifiedChange, ac
                 minimap: { enabled: false },
                 scrollBeyondLastLine: false,
                 originalEditable: false,
-                fontSize: 18,
+                fontSize: 14,
             diffWordWrap: "on",
             }}
             originalModelPath="original"
