@@ -47,6 +47,13 @@ export function BulkReviewControls({
   isApproving,
   onSetApproving,
 }: BulkReviewControlsProps) {
+  const currentFileStatus = bulkReviewProgress
+    ? fileStatuses[bulkReviewProgress.current - 1]?.status
+    : undefined;
+  const isFinalFileApproved = Boolean(
+    bulkReviewMode && bulkReviewProgress && !canGoNext && currentFileStatus === "approved"
+  );
+
   return (
     <>
       {/* Analysis Progress - shown during AI analysis phase */}
@@ -132,9 +139,13 @@ export function BulkReviewControls({
                 setTimeout(() => onSetApproving(false), 800);
               }}
               className={`flex-1 transition-all duration-300 ${isApproving ? "bg-green-600 hover:bg-green-700 scale-105" : ""}`}
-              disabled={isApproving}
+              disabled={isApproving || isFinalFileApproved}
             >
-              {isApproving ? "承認済!" : (canGoNext ? "承認して次へ" : "承認")}
+              {isApproving
+                ? "承認済!"
+                : isFinalFileApproved
+                  ? "承認済み"
+                  : (canGoNext ? "承認して次へ" : "承認")}
             </Button>
           </div>
 
