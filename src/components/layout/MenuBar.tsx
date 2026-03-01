@@ -1,16 +1,28 @@
 import { useState, useRef, useEffect } from "react";
-import { FolderOpen, Folder, Save, FileText } from "lucide-react";
+import { FolderOpen, Folder, Save, FileText, Settings, Key } from "lucide-react";
 
 
 interface MenuBarProps {
   onOpenFile: () => void;
   onOpenFolder: () => void;
   onSaveFile: () => void;
+  onOpenSettings?: () => void;
   activeFileName?: string;
   hasUnsavedChanges?: boolean;
+  disableSave?: boolean;
+  isReviewMode?: boolean;
 }
 
-export function MenuBar({ onOpenFile, onOpenFolder, onSaveFile, activeFileName, hasUnsavedChanges }: MenuBarProps) {
+export function MenuBar({
+  onOpenFile,
+  onOpenFolder,
+  onSaveFile,
+  onOpenSettings,
+  activeFileName,
+  hasUnsavedChanges,
+  disableSave = false,
+  isReviewMode = false,
+}: MenuBarProps) {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -44,7 +56,7 @@ export function MenuBar({ onOpenFile, onOpenFolder, onSaveFile, activeFileName, 
           className={`px-3 py-1 rounded-sm hover:bg-muted transition-colors ${openMenu === "file" ? "bg-muted" : ""}`}
           onClick={() => handleMenuClick("file")}
         >
-          File
+          ファイル
         </button>
         {openMenu === "file" && (
           <div className="absolute top-full left-0 mt-0.5 w-56 bg-popover border rounded-md shadow-lg py-1 z-50">
@@ -66,8 +78,17 @@ export function MenuBar({ onOpenFile, onOpenFolder, onSaveFile, activeFileName, 
             </button>
             <div className="border-t my-1" />
             <button
-              className="w-full px-3 py-1.5 text-left hover:bg-accent flex items-center gap-2"
-              onClick={() => handleAction(onSaveFile)}
+              className={`w-full px-3 py-1.5 text-left flex items-center gap-2 ${
+                disableSave ? "text-muted-foreground/50 cursor-not-allowed" : "hover:bg-accent"
+              }`}
+              onClick={() => {
+                if (!disableSave) {
+                  handleAction(onSaveFile);
+                }
+              }}
+              disabled={disableSave}
+              aria-disabled={disableSave}
+              title={disableSave ? (isReviewMode ? "レビュー完了後に保存してください" : "保存できません") : undefined}
             >
               <Save size={14} />
               <span>名前を付けて保存</span>
@@ -96,13 +117,35 @@ export function MenuBar({ onOpenFile, onOpenFolder, onSaveFile, activeFileName, 
           className={`px-3 py-1 rounded-sm hover:bg-muted transition-colors ${openMenu === "edit" ? "bg-muted" : ""}`}
           onClick={() => handleMenuClick("edit")}
         >
-          Edit
+          編集
         </button>
         {openMenu === "edit" && (
           <div className="absolute top-full left-0 mt-0.5 w-48 bg-popover border rounded-md shadow-lg py-1 z-50">
             <div className="px-3 py-1.5 text-muted-foreground text-xs">
               編集機能は準備中です
             </div>
+          </div>
+        )}
+      </div>
+
+      {/* Settings Menu */}
+      <div className="relative">
+        <button
+          className={`px-3 py-1 rounded-sm hover:bg-muted transition-colors ${openMenu === "settings" ? "bg-muted" : ""}`}
+          onClick={() => handleMenuClick("settings")}
+        >
+          <Settings size={14} className="inline mr-1" />
+          設定
+        </button>
+        {openMenu === "settings" && (
+          <div className="absolute top-full left-0 mt-0.5 w-56 bg-popover border rounded-md shadow-lg py-1 z-50">
+            <button
+              className="w-full px-3 py-1.5 text-left hover:bg-accent flex items-center gap-2"
+              onClick={() => handleAction(() => onOpenSettings?.())}
+            >
+              <Key size={14} />
+              <span>APIキー設定</span>
+            </button>
           </div>
         )}
       </div>

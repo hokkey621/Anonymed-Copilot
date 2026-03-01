@@ -8,10 +8,11 @@ export interface ReplacementEntry {
 }
 
 export interface AnonPlan {
-    task_name: string;
-    global_rules: Record<string, any>; // JSON Value in Rust maps to any or specific struct
+    taskName: string;
+    globalRules: Record<string, any>; // JSON Value in Rust maps to any or specific struct
     replacements: ReplacementEntry[];
     status: "draft" | "approved";
+    appliedSkills?: string[];
 }
 
 export interface AgentResponse {

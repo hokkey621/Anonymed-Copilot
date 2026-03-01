@@ -1,128 +1,230 @@
 import { useState, useRef, useEffect } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Button } from "@/components/ui/button";
+import { useToast } from "@/components/ui/Toast";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ChatMessage } from "@/components/chat/ChatMessage";
 import { BulkPlanCard } from "@/components/chat/BulkPlanCard";
 import { SuggestionChips } from "@/components/chat/SuggestionChips";
 import { AgentProgressEvent } from "./ProgressIndicator";
-import { Send, ChevronDown, FileText, Loader2 } from "lucide-react";
+import { ChatThreadHeader } from "./chat/ChatThreadHeader";
+import { BulkReviewControls } from "./chat/BulkReviewControls";
+import { ChatInputFooter } from "./chat/ChatInputFooter";
+import {
+  INITIAL_ASSISTANT_MESSAGE,
+  MAX_CHAT_THREADS,
+  MODEL_OPTIONS,
+  PLAN_FLOW_PHASES,
+} from "./chat/constants";
+import {
+  checkNeedsFileContent,
+  filterThoughtTags,
+  formatCommandError,
+  isPartialPlanEditIntent,
+  namesFromPath,
+  resolveResponseContent,
+  shouldRunAnonymizationDirectly,
+} from "./chat/chatLogic";
+import { clampThreads, createThread, deriveThreadTitle, loadThreads, persistThreads } from "./chat/threadStore";
+import type {
+  AgentChatResponse,
+  BulkExecutionPlan,
+  BulkProgressEvent,
+  ChatPhase,
+  ChatThread,
+  Message,
+  ModelProvider,
+} from "./chat/types";
 
-interface Message {
-  role: "user" | "assistant";
-  content: string;
-  bulkPlan?: BulkExecutionPlan;
-  workflowSteps?: WorkflowStep[];
-  suggestions?: string[];
-}
-
-interface BulkExecutionPlan {
-  target_count: number;
-  estimated_time_ms: number;
-  policy_summary: string[];
-}
-
-interface WorkflowStep {
-  id: string;
-  label: string;
-  status: "pending" | "running" | "completed" | "failed";
-}
-
-interface BulkProgressEvent {
-  completed: number;
-  total: number;
-  current_file: string;
-  step_id: string;
-  step_status: string;
-  step_message: string;
-}
-
-interface AgentChatResponse {
-  message: string;
-  bulk_plan: BulkExecutionPlan | null;
-  workflow_steps: WorkflowStep[] | null;
-  suggestions: string[] | null;
-}
+export type { ModelProvider } from "./chat/types";
 
 interface ConfigSidebarProps {
-  onRunAnonymization: (task: string) => void;
+  onRunAnonymization: (task: string, executionPlan?: BulkExecutionPlan | null) => void;
   isProcessing: boolean;
+  selectedProvider: ModelProvider;
+  onProviderChange: (provider: ModelProvider) => void;
+  onOpenFile?: () => Promise<void> | void;
+  onOpenFolder?: () => Promise<void> | void;
   currentContent: string;
   fileCount?: number;
   currentDirPath?: string;
   currentPlan?: any;
   currentFileName?: string;
+  selectedFilePaths?: string[];
+  // Bulk review mode props
+  onStartBulkReview?: (taskContext: string, executionPlan?: BulkExecutionPlan | null) => void;
+  bulkReviewMode?: boolean;
+  bulkReviewProgress?: { current: number; total: number; fileName: string };
+  bulkAnalysisProgress?: { completed: number; total: number; isAnalyzing: boolean };
+  onBulkApprove?: () => void;
+  onBulkSkip?: () => void;
+  onBulkCancel?: () => void;
+  onBulkPrevious?: () => void;
+  onBulkComplete?: () => Promise<{ path: string; files: string[] } | null | void>;
+  canGoPrevious?: boolean;
+  canGoNext?: boolean;
+  fileStatuses?: { path: string; fileName: string; status: 'approved' | 'skipped' | 'pending' }[];
+  onStopOperations?: () => Promise<void> | void;
 }
-
-const MODEL_OPTIONS = [
-  { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
-  { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
-  { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash" },
-];
 
 export function ConfigSidebar({
   onRunAnonymization,
   isProcessing,
+  selectedProvider,
+  onProviderChange,
+  onOpenFile,
+  onOpenFolder,
   currentContent,
   fileCount = 0,
   currentDirPath = "",
   currentPlan,
-  currentFileName = ""
+  currentFileName = "",
+  selectedFilePaths = [],
+  onStartBulkReview,
+  bulkReviewMode = false,
+  bulkReviewProgress,
+  bulkAnalysisProgress,
+  onBulkApprove,
+  onBulkSkip,
+  onBulkCancel,
+  onBulkPrevious,
+  onBulkComplete,
+  canGoPrevious = false,
+  canGoNext = true,
+  fileStatuses = [],
+  onStopOperations,
 }: ConfigSidebarProps) {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: "assistant",
-      content: "こんにちは、Anonymed Copilotです。まず、作業するファイルかフォルダを開いてください。次に、チャットで質問するか質問例をタップしてください。",
-      suggestions: ["匿名化したい", "使い方が知りたい"]
-    }
-  ]);
+  const { showToast } = useToast();
+  const [messages, setMessages] = useState<Message[]>([INITIAL_ASSISTANT_MESSAGE]);
+  const [threads, setThreads] = useState<ChatThread[]>([]);
+  const [activeThreadId, setActiveThreadId] = useState<string>("");
   const [inputInfo, setInputInfo] = useState("");
   const [isChatLoading, setIsChatLoading] = useState(false);
+  const [isStopRequested, setIsStopRequested] = useState(false);
   const [taskContext, setTaskContext] = useState("Medical Case Study");
-  const [selectedModel, setSelectedModel] = useState("gemini-3-flash-preview");
-  const [showModelDropdown, setShowModelDropdown] = useState(false);
+  const [_showModelDropdown] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{ completed: number; total: number; currentFile?: string } | null>(null);
-  const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([]);
   const [isBulkExecuting, setIsBulkExecuting] = useState(false);
   const [activeBulkPlan, setActiveBulkPlan] = useState<BulkExecutionPlan | null>(null);
   const [streamingContent, setStreamingContent] = useState<string>("");
   const [thinkingPhase, setThinkingPhase] = useState<string>("");
+  const [isApproving, setIsApproving] = useState(false);
+  const [activeSkills, setActiveSkills] = useState<string[]>([]);
+  const [chatPhase, setChatPhase] = useState<ChatPhase>("discovery");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const streamEndReasonRef = useRef<"completed" | "cancelled" | null>(null);
 
-  // Helper function to filter out thought tags from AI responses
-  const filterThoughtTags = (text: string): string => {
-    let cleaned = text;
-    // Remove [System]: ... patterns (LLM sometimes echoes system prompt)
-    cleaned = cleaned.replace(/\[System\]:?[\s\S]*?(?=\n\n|\n[ぁ-んァ-ン一-龯]|$)/gi, '');
-    // Remove [THOUGHT]: ... patterns
-    cleaned = cleaned.replace(/\[THOUGHT\]:?[\s\S]*?(?=\n\n|\n[A-Zぁ-んァ-ン一-龯]|$)/gi, '');
-    // Remove [thinking]...[/thinking] blocks
-    cleaned = cleaned.replace(/\[thinking\][\s\S]*?\[\/thinking\]\s*/gi, '');
+  const canStop = isChatLoading || !!bulkAnalysisProgress?.isAnalyzing;
 
-    // Aggressive filter: If [/THOUGHT] exists, assume everything before it is internal thought
-    if (cleaned.includes("[/THOUGHT]")) {
-      cleaned = cleaned.replace(/[\s\S]*?\[\/THOUGHT\]\s*/i, '');
-    }
-
-    return cleaned.trim();
+  const replaceActiveThread = (
+    nextMessages: Message[],
+    nextSkills?: string[],
+    nextPhase?: ChatPhase,
+  ) => {
+    const skills = nextSkills ?? activeSkills;
+    const phase = nextPhase ?? chatPhase;
+    setMessages(nextMessages);
+    setActiveSkills(skills);
+    setChatPhase(phase);
+    setThreads((prev) => {
+      const updated = prev
+        .map((thread) => {
+          if (thread.id !== activeThreadId) return thread;
+          return {
+            ...thread,
+            messages: nextMessages,
+            activeSkills: skills,
+            chatPhase: phase,
+            updatedAt: Date.now(),
+            title: deriveThreadTitle(nextMessages, thread.title),
+          };
+        })
+        .slice(0, MAX_CHAT_THREADS);
+      persistThreads(updated, activeThreadId);
+      return updated;
+    });
   };
 
-  // Listen for agent progress
+  const buildApiMessages = (history: Message[]) => {
+    // The first assistant greeting is UI guidance and should not bias the model conversation.
+    const cleaned = history.filter((m, i) => !(i === 0 && m.role === "assistant"));
+    return cleaned
+      .slice(-12)
+      .map(m => ({ role: m.role, content: m.content }));
+  };
+
+  const showErrorPopup = (message: string) => {
+    showToast(message, "error", 6000);
+  };
+
   useEffect(() => {
-    const unlisten = listen<AgentProgressEvent>("agent-progress", () => {});
-    return () => { unlisten.then(f => f()); };
+    const freshThread = createThread(INITIAL_ASSISTANT_MESSAGE);
+
+    try {
+      const parsed = loadThreads();
+      if (parsed && Array.isArray(parsed.threads) && parsed.threads.length > 0) {
+          const hydratedThreads = clampThreads(parsed.threads)
+            .map((thread) => ({
+              ...thread,
+              chatPhase: (thread.chatPhase ?? "discovery") as ChatPhase,
+            }))
+            .filter((thread) => thread.id !== freshThread.id);
+
+          const nextThreads = clampThreads([freshThread, ...hydratedThreads]);
+          setThreads(nextThreads);
+          setActiveThreadId(freshThread.id);
+          setMessages(freshThread.messages);
+          setActiveSkills(freshThread.activeSkills);
+          setChatPhase(freshThread.chatPhase);
+          persistThreads(nextThreads, freshThread.id);
+          return;
+      }
+    } catch (e) {
+      console.warn("Failed to load chat history:", e);
+    }
+
+    setThreads([freshThread]);
+    setActiveThreadId(freshThread.id);
+    setMessages(freshThread.messages);
+    setActiveSkills(freshThread.activeSkills);
+    setChatPhase("discovery");
+    persistThreads([freshThread], freshThread.id);
   }, []);
+
+  useEffect(() => {
+    if (threads.length === 0 || !activeThreadId) return;
+    persistThreads(clampThreads(threads), activeThreadId);
+  }, [threads, activeThreadId]);
+
+  const allReviewed = bulkReviewMode && fileStatuses.length > 0 && fileStatuses.every(f => f.status !== 'pending');
+  const approvedCount = fileStatuses.filter(f => f.status === 'approved').length;
+
+  // Listen for agent progress (including skill matching)
+  useEffect(() => {
+    const unlisten = listen<AgentProgressEvent>("agent-progress", (event) => {
+      // Track matched skills from the Skills step
+      if (event.payload.step === "Skills" && event.payload.status === "Completed") {
+        const match = event.payload.message.match(/Matched skills: (.+)/);
+        if (match) {
+          const skills = match[1].split(", ").map(s => s.trim());
+          setActiveSkills(skills);
+          setThreads((prev) =>
+            prev.map((thread) =>
+              thread.id === activeThreadId ? { ...thread, activeSkills: skills, updatedAt: Date.now() } : thread
+            )
+          );
+        }
+      }
+    });
+    return () => { unlisten.then(f => f()); };
+  }, [activeThreadId]);
 
   // Listen for bulk progress
   useEffect(() => {
     const unlisten = listen<BulkProgressEvent>("bulk-progress", (event) => {
-      const { completed, total, current_file, step_id, step_status } = event.payload;
-      setBulkProgress({ completed, total, currentFile: current_file });
-      setWorkflowSteps(prev => prev.map(step =>
-        step.id === step_id ? { ...step, status: step_status as WorkflowStep['status'] } : step
-      ));
-      if (step_id === "audit" && step_status === "completed") {
+      const { completed, total, currentFile, stepId, stepStatus } = event.payload;
+      setBulkProgress({ completed, total, currentFile });
+      if (stepId === "audit" && stepStatus === "completed") {
         setIsBulkExecuting(false);
       }
     });
@@ -132,17 +234,20 @@ export function ConfigSidebar({
   // Listen for chat streaming
   useEffect(() => {
     const unlistenStream = listen<{ chunk: string; full: string }>("chat-stream", (event) => {
-      // Remove [THOUGHT]:... and [thinking]...[/thinking] blocks from display
-      let cleaned = event.payload.full;
-      // Remove [THOUGHT]: ... patterns (entire line or until end of thought)
-      cleaned = cleaned.replace(/\[THOUGHT\]:?\s*[\s\S]*?(?=\n\n|\n[A-Z]|$)/gi, '');
-      // Remove [thinking]...[/thinking] blocks
-      cleaned = cleaned.replace(/\[thinking\][\s\S]*?\[\/thinking\]\s*/gi, '');
-      // Trim leading/trailing whitespace
-      cleaned = cleaned.trim();
-      setStreamingContent(cleaned);
+      setStreamingContent(filterThoughtTags(event.payload.full));
     });
     return () => { unlistenStream.then(f => f()); };
+  }, []);
+
+  useEffect(() => {
+    const unlistenEnd = listen<{ full: string; reason?: string }>("chat-stream-end", (event) => {
+      streamEndReasonRef.current =
+        event.payload.reason === "cancelled" ? "cancelled" : "completed";
+      if (event.payload.reason === "cancelled") {
+        setThinkingPhase("停止しました");
+      }
+    });
+    return () => { unlistenEnd.then(f => f()); };
   }, []);
 
   // Listen for thinking phases
@@ -160,65 +265,236 @@ export function ConfigSidebar({
     }
   }, [messages]);
 
-  const handleSendMessage = async () => {
-    if (!inputInfo.trim() || isChatLoading) return;
+  const handleCreateNewThread = () => {
+    if (canStop || isProcessing) return;
+    const thread = createThread(INITIAL_ASSISTANT_MESSAGE);
+    setThreads((prev) => {
+      const next = clampThreads([thread, ...prev]);
+      persistThreads(next, thread.id);
+      return next;
+    });
+    setActiveThreadId(thread.id);
+    setMessages(thread.messages);
+    setActiveSkills([]);
+    setChatPhase("discovery");
+    setStreamingContent("");
+    setThinkingPhase("");
+  };
 
-    const userMsg: Message = { role: "user", content: inputInfo };
-    setMessages(prev => [...prev, userMsg]);
-    setInputInfo("");
-    setIsChatLoading(true);
+  const handleSwitchThread = (threadId: string) => {
+    if (canStop || isProcessing) return;
+    const thread = threads.find((t) => t.id === threadId);
+    if (!thread) return;
+    setActiveThreadId(thread.id);
+    setMessages(thread.messages);
+    setActiveSkills(thread.activeSkills ?? []);
+    setChatPhase(thread.chatPhase ?? "discovery");
+    setStreamingContent("");
+    setThinkingPhase("");
+  };
 
-    // Check if this message requires file content (only for plan creation/execution)
-    const needsContentKeywords = [
-      "計画を立てて", "実行して", "一括", "全件", "全て", "すべて"
-    ];
-    const needsFileContent = needsContentKeywords.some(kw => inputInfo.includes(kw));
-
-    const newHistory = [...messages, userMsg];
-    let apiMessages = newHistory.map(m => ({ role: m.role, content: m.content }));
-
-    // Only include file content when needed for anonymization plan
-    if (needsFileContent && currentContent && currentContent.trim().length > 0) {
-      if (messages.length === 1) {
-        apiMessages = [
-          messages[0],
-          { role: "user", content: `Context Document:\n${currentContent}\n\nUser Question: ${inputInfo}` }
-        ];
+  const handleStop = async () => {
+    if (!canStop || isStopRequested) return;
+    setIsStopRequested(true);
+    setThinkingPhase("停止要求中...");
+    try {
+      if (onStopOperations) {
+        await onStopOperations();
       } else {
-        const firstUserIndex = apiMessages.findIndex(m => m.role === "user");
-        if (firstUserIndex !== -1) {
-          apiMessages[firstUserIndex].content = `[Document Context]:\n${currentContent}\n\n[User]: ${apiMessages[firstUserIndex].content}`;
-        }
+        await invoke("cancel_active_operations");
       }
+    } catch (e) {
+      console.error("Failed to request stop:", e);
+    } finally {
+      setIsStopRequested(false);
+    }
+  };
+
+  const sendText = async (text: string) => {
+    if (!text.trim() || isChatLoading || !activeThreadId) return;
+
+    const userMsg: Message = { role: "user", content: text };
+    const history = [...messages, userMsg];
+    replaceActiveThread(history);
+    setInputInfo("");
+
+    const normalized = text.replace(/\s+/g, "");
+    if (normalized === "ファイルを開く" || normalized === "フォルダを開く") {
+      try {
+        if (normalized === "ファイルを開く") {
+          await onOpenFile?.();
+          replaceActiveThread([
+            ...history,
+            {
+              role: "assistant",
+              content: "ファイル選択ダイアログを開きました。ファイルを開いたら「匿名化プランを作成」と入力してください。",
+              suggestions: ["匿名化プランを作成", "標準ルールで作成", "使い方を教えて"],
+            },
+          ]);
+        } else {
+          await onOpenFolder?.();
+          replaceActiveThread([
+            ...history,
+            {
+              role: "assistant",
+              content: "フォルダ選択ダイアログを開きました。対象を選んだら「匿名化プランを作成」と入力してください。",
+              suggestions: ["匿名化プランを作成", "処理対象を確認", "使い方を教えて"],
+            },
+          ]);
+        }
+      } catch (e) {
+        showErrorPopup(formatCommandError(e));
+        replaceActiveThread([
+          ...history,
+          { role: "assistant", content: `エラー: ${formatCommandError(e)}` },
+        ]);
+      }
+      return;
     }
 
+    if (normalized === "処理対象を確認" || normalized === "選択ファイルを確認") {
+      const selectedNames = namesFromPath(selectedFilePaths);
+      let targetSummary = "";
+
+      if (selectedNames.length > 0) {
+        const preview = selectedNames.slice(0, 5).join("、");
+        const rest = selectedNames.length > 5 ? ` ほか${selectedNames.length - 5}件` : "";
+        targetSummary = `現在の処理対象は ${selectedNames.length} 件です。\n${preview}${rest}`;
+      } else if (currentFileName) {
+        targetSummary = `現在の処理対象は 1 件です。\n${currentFileName}`;
+      } else if (fileCount > 0) {
+        targetSummary = `現在の処理対象は ${fileCount} 件です。`;
+      } else {
+        targetSummary = "現在、処理対象のファイルはありません。先にファイルまたはフォルダを開いてください。";
+      }
+
+      replaceActiveThread([
+        ...history,
+        {
+          role: "assistant",
+          content: targetSummary,
+          suggestions:
+            fileCount > 0
+              ? ["匿名化プランを作成", "標準ルールで作成", "使い方を教えて"]
+              : ["ファイルを開く", "フォルダを開く", "使い方を教えて"],
+        },
+      ]);
+      return;
+    }
+
+    const hasExecutablePlan = !!activeBulkPlan || ((currentPlan?.replacements?.length ?? 0) > 0);
+    if (shouldRunAnonymizationDirectly(text, hasExecutablePlan)) {
+      if (currentDirPath && onStartBulkReview && selectedFilePaths.length > 0) {
+        replaceActiveThread([...history, {
+          role: "assistant",
+          content: `選択された ${selectedFilePaths.length} 件を匿名化します。結果が出るまでお待ちください。`,
+        }]);
+        onStartBulkReview(taskContext, activeBulkPlan);
+        return;
+      }
+
+      if (!currentContent) {
+        replaceActiveThread([...history, {
+          role: "assistant",
+          content: "匿名化するテキストがありません。先にファイルを開いてください。",
+        }]);
+        return;
+      }
+
+      replaceActiveThread([...history, {
+        role: "assistant",
+        content: "匿名化を実行します。結果が出るまでお待ちください。",
+      }]);
+      onRunAnonymization(taskContext, activeBulkPlan);
+      return;
+    }
+
+    if (activeBulkPlan && isPartialPlanEditIntent(text)) {
+      try {
+        const updatedPlan = await invoke<BulkExecutionPlan>("revise_bulk_plan", {
+          plan: activeBulkPlan,
+          userRequest: text,
+          provider: selectedProvider,
+        });
+        setActiveBulkPlan(updatedPlan);
+        replaceActiveThread(
+          [
+            ...history,
+            {
+              role: "assistant",
+              content: `計画を更新しました（v${updatedPlan.planVersion ?? 1}）。この計画を固定して実行できます。`,
+              bulkPlan: updatedPlan,
+              suggestions: ["この内容で実行", "一部ルールを修正", "変更点を説明して"],
+            },
+          ],
+          activeSkills,
+          "revision",
+        );
+      } catch (e) {
+        const message = formatCommandError(e);
+        showErrorPopup(message);
+        replaceActiveThread(
+          [
+            ...history,
+            {
+              role: "assistant",
+              content: `計画の編集に失敗しました: ${message}`,
+              bulkPlan: activeBulkPlan,
+              suggestions: ["年齢を10歳刻みにする", "日付を年月のみにする", "この内容で実行"],
+            },
+          ],
+          activeSkills,
+          "revision",
+        );
+      }
+      return;
+    }
+
+    setIsChatLoading(true);
+    const needsFileContent = checkNeedsFileContent(text);
+    const apiMessages = buildApiMessages(history);
     try {
-      // Start with empty streaming content
+      streamEndReasonRef.current = null;
       setStreamingContent("");
 
       const response = await invoke<AgentChatResponse>("agent_chat_streaming", {
         messages: apiMessages,
         fileCount: fileCount,
-        editorContent: needsFileContent ? (currentContent || null) : null
+        editorContent: needsFileContent ? (currentContent || null) : null,
+        provider: selectedProvider,
+        chatPhase,
       });
 
-      const newMessage: Message = {
+      const nextPhase: ChatPhase = response.nextState ?? chatPhase;
+      const shouldKeepPlanCard =
+        !!activeBulkPlan &&
+        (PLAN_FLOW_PHASES.includes(chatPhase) || PLAN_FLOW_PHASES.includes(nextPhase));
+      const planForMessage = response.bulkPlan || (shouldKeepPlanCard ? activeBulkPlan : null);
+
+      const assistantMessage: Message = {
         role: "assistant",
-        content: filterThoughtTags(response.message),
-        bulkPlan: response.bulk_plan || undefined,
-        workflowSteps: response.workflow_steps || undefined,
-        suggestions: response.suggestions || undefined
+        content: resolveResponseContent(
+          response.message,
+          text,
+          streamEndReasonRef.current === "cancelled",
+          !!currentContent || selectedFilePaths.length > 0 || fileCount > 0,
+        ),
+        bulkPlan: planForMessage || undefined,
+        workflowSteps: response.workflowSteps || undefined,
+        suggestions: response.suggestions || undefined,
       };
 
-      setMessages(prev => [...prev, newMessage]);
+      replaceActiveThread(
+        [...history, assistantMessage],
+        response.appliedSkills ?? [],
+        nextPhase,
+      );
 
-      if (response.bulk_plan && response.workflow_steps) {
-        setActiveBulkPlan(response.bulk_plan);
-        setWorkflowSteps(response.workflow_steps);
+      if (planForMessage) {
+        setActiveBulkPlan(planForMessage);
       }
 
-      // Auto-detect task context
-      const lowerInput = inputInfo.toLowerCase();
+      const lowerInput = text.toLowerCase();
       if (lowerInput.includes("ワクチン") || lowerInput.includes("vaccine")) {
         setTaskContext("Vaccine Development");
       } else if (lowerInput.includes("教育") || lowerInput.includes("教材")) {
@@ -226,58 +502,85 @@ export function ConfigSidebar({
       }
     } catch (e) {
       console.error("Chat error:", e);
-      setMessages(prev => [...prev, { role: "assistant", content: `エラー: ${e}` }]);
+      const message = formatCommandError(e);
+      showErrorPopup(message);
+      replaceActiveThread([...history, { role: "assistant", content: `エラー: ${message}` }]);
     } finally {
       setIsChatLoading(false);
+      setStreamingContent("");
     }
+  };
+
+  const handleSendMessage = async () => {
+    await sendText(inputInfo);
   };
 
   const handleBulkCommit = async () => {
     console.log("handleBulkCommit called", { currentDirPath, currentPlan, currentContent });
 
+    // If in bulk review mode, this should not be called directly
+    // Use onStartBulkReview instead for sequential review flow
+    if (currentDirPath && onStartBulkReview && selectedFilePaths.length > 0) {
+      // Start sequential review mode with per-file AI analysis
+      onStartBulkReview(taskContext, activeBulkPlan);
+      setActiveBulkPlan(null);
+      return;
+    }
+
+    // Single file mode - use the original anonymization flow
+    if (!currentDirPath && currentContent) {
+      onRunAnonymization(taskContext, activeBulkPlan);
+      return;
+    }
+
+    // Fallback: Old bulk execute (direct save without review)
     setIsBulkExecuting(true);
-    setBulkProgress({ completed: 0, total: activeBulkPlan?.target_count || 1 });
+    setBulkProgress({ completed: 0, total: activeBulkPlan?.targetCount || 1 });
 
     try {
-      // If folder is available, use bulk execute
       if (currentDirPath && currentPlan) {
         await invoke("bulk_execute", {
           dirPath: currentDirPath,
           plan: currentPlan,
-          taskName: taskContext.replace(/\s+/g, '_')
+          taskName: taskContext.replace(/\s+/g, '_'),
+          targetFiles: selectedFilePaths.length > 0 ? selectedFilePaths : null
         });
-        setMessages(prev => [...prev, {
+        replaceActiveThread([...messages, {
           role: "assistant",
           content: "✅ 完了しました。`anonymized_outputs` フォルダに保存されました。"
         }]);
-      } else {
-        // Single file mode - use the original anonymization flow (analyze + apply with diff)
-        // No message needed - user will see the diff in the editor
-        onRunAnonymization(taskContext);
       }
     } catch (e) {
-      setMessages(prev => [...prev, { role: "assistant", content: `❌ エラー: ${e}` }]);
+      showErrorPopup(String(e));
+      replaceActiveThread([...messages, { role: "assistant", content: `❌ エラー: ${e}` }]);
     } finally {
       setIsBulkExecuting(false);
       setActiveBulkPlan(null);
     }
   };
 
-  const modelLabel = MODEL_OPTIONS.find(m => m.value === selectedModel)?.label || selectedModel;
+  const modelLabel = MODEL_OPTIONS.find(m => m.value === selectedProvider)?.label || selectedProvider;
 
   return (
     <div className="h-full flex flex-col bg-background">
+      <ChatThreadHeader
+        threads={threads}
+        activeThreadId={activeThreadId}
+        onCreateNewThread={handleCreateNewThread}
+        onSwitchThread={handleSwitchThread}
+        disabled={canStop || isProcessing}
+      />
+
       {/* Chat Messages */}
       <ScrollArea className="flex-1" ref={scrollRef}>
         <div className="p-3 space-y-3">
           {messages.map((m, i) => (
             <div key={i}>
               <ChatMessage role={m.role} content={m.content} />
-              {m.bulkPlan && m.workflowSteps && (
+              {m.bulkPlan && (
                 <div className="mt-2">
                   <BulkPlanCard
                     plan={m.bulkPlan}
-                    workflowSteps={workflowSteps.length > 0 ? workflowSteps : m.workflowSteps}
                     onCommit={handleBulkCommit}
                     isExecuting={isBulkExecuting || isProcessing}
                     progress={bulkProgress || undefined}
@@ -292,61 +595,8 @@ export function ConfigSidebar({
            messages[messages.length - 1].suggestions!.length > 0 && (
             <SuggestionChips
               suggestions={messages[messages.length - 1].suggestions!}
-              onSelect={async (text) => {
-                // Directly send the suggestion as a message
-                if (!currentContent || isChatLoading) return;
-
-                const userMsg: Message = { role: "user", content: text };
-                setMessages(prev => [...prev, userMsg]);
-                setIsChatLoading(true);
-
-                // Check if this suggestion requires file content (only for plan creation/execution)
-                const needsContentKeywords = [
-                  "計画を立てて", "実行して", "一括", "全件", "全て", "すべて"
-                ];
-                const needsFileContent = needsContentKeywords.some(kw => text.includes(kw));
-
-                const newHistory = [...messages, userMsg];
-                let apiMessages = newHistory.map(m => ({ role: m.role, content: m.content }));
-
-                // Only include file content when needed for anonymization plan
-                if (needsFileContent && currentContent && currentContent.trim().length > 0) {
-                  const firstUserIndex = apiMessages.findIndex(m => m.role === "user");
-                  if (firstUserIndex !== -1) {
-                    apiMessages[firstUserIndex].content = `[Document Context]:\n${currentContent}\n\n[User]: ${apiMessages[firstUserIndex].content}`;
-                  }
-                }
-
-                try {
-                  setStreamingContent("");
-                  const response = await invoke<AgentChatResponse>("agent_chat_streaming", {
-                    messages: apiMessages,
-                    fileCount: fileCount,
-                    editorContent: needsFileContent ? (currentContent || null) : null
-                  });
-
-                  const newMessage: Message = {
-                    role: "assistant",
-                    content: filterThoughtTags(response.message),
-                    bulkPlan: response.bulk_plan || undefined,
-                    workflowSteps: response.workflow_steps || undefined,
-                    suggestions: response.suggestions || undefined
-                  };
-
-                  setMessages(prev => [...prev, newMessage]);
-
-                  if (response.bulk_plan && response.workflow_steps) {
-                    setActiveBulkPlan(response.bulk_plan);
-                    setWorkflowSteps(response.workflow_steps);
-                  }
-                } catch (e) {
-                  console.error("Chat error:", e);
-                  setMessages(prev => [...prev, { role: "assistant", content: `エラー: ${e}` }]);
-                } finally {
-                  setIsChatLoading(false);
-                }
-              }}
-              disabled={isChatLoading || !currentContent}
+              onSelect={sendText}
+              disabled={isChatLoading || isProcessing}
             />
           )}
           {isChatLoading && (
@@ -371,71 +621,43 @@ export function ConfigSidebar({
         </div>
       </ScrollArea>
 
-      {/* Footer: File indicator + Input */}
-      <div className="border-t p-3 space-y-2">
-        {/* Target file indicator */}
-        {(currentFileName || currentContent) && (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 px-2 py-1.5 rounded">
-            <FileText size={12} />
-            <span className="truncate">{currentFileName || "選択中のテキスト"}</span>
-          </div>
-        )}
+      <BulkReviewControls
+        bulkReviewMode={bulkReviewMode}
+        bulkReviewProgress={bulkReviewProgress}
+        bulkAnalysisProgress={bulkAnalysisProgress}
+        onBulkApprove={onBulkApprove}
+        onBulkSkip={onBulkSkip}
+        onBulkCancel={onBulkCancel}
+        onBulkPrevious={onBulkPrevious}
+        canGoPrevious={canGoPrevious}
+        canGoNext={canGoNext}
+        fileStatuses={fileStatuses}
+        isApproving={isApproving}
+        onSetApproving={setIsApproving}
+      />
 
-        {/* Input row */}
-        <div className="flex gap-2">
-          <input
-            type="text"
-            className="flex-1 px-3 py-2 text-sm rounded-md border bg-background focus:outline-none focus:ring-1 focus:ring-blue-500"
-            value={inputInfo}
-            onChange={(e) => setInputInfo(e.target.value)}
-            placeholder={currentContent ? "質問を入力..." : "テキストを選択してください"}
-            onKeyDown={(e) => e.key === 'Enter' && e.metaKey && handleSendMessage()}
-            disabled={!currentContent || isProcessing}
-          />
-          <Button
-            size="sm"
-            variant="default"
-            onClick={handleSendMessage}
-            disabled={!currentContent || !inputInfo.trim() || isChatLoading}
-            className="shrink-0 gap-1.5"
-          >
-            <Send size={14} />
-            送信
-          </Button>
-        </div>
-
-        {/* Model selector row */}
-        <div className="flex items-center justify-between text-xs">
-          <div className="relative">
-            <button
-              onClick={() => setShowModelDropdown(!showModelDropdown)}
-              className="flex items-center gap-1 px-2 py-1 rounded hover:bg-muted transition-colors text-muted-foreground"
-            >
-              {modelLabel}
-              <ChevronDown size={12} />
-            </button>
-            {showModelDropdown && (
-              <div className="absolute bottom-full left-0 mb-1 bg-popover border rounded-md shadow-lg py-1 min-w-[160px] z-50">
-                {MODEL_OPTIONS.map(opt => (
-                  <button
-                    key={opt.value}
-                    onClick={() => { setSelectedModel(opt.value); setShowModelDropdown(false); }}
-                    className={`w-full text-left px-3 py-1.5 hover:bg-muted ${selectedModel === opt.value ? 'text-blue-500' : ''}`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          {isProcessing && (
-            <span className="text-muted-foreground flex items-center gap-1">
-              <Loader2 className="w-3 h-3 animate-spin" />
-              処理中...
-            </span>
-          )}
-        </div>
-      </div>
+      <ChatInputFooter
+        inputInfo={inputInfo}
+        onInputChange={setInputInfo}
+        onSendMessage={handleSendMessage}
+        isProcessing={isProcessing}
+        isChatLoading={isChatLoading}
+        currentContent={currentContent}
+        currentFileName={currentFileName}
+        selectedProvider={selectedProvider}
+        onProviderChange={onProviderChange}
+        modelLabel={modelLabel}
+        canStop={canStop}
+        isStopRequested={isStopRequested}
+        onStop={handleStop}
+        activeSkills={activeSkills}
+        bulkReviewMode={bulkReviewMode}
+        allReviewed={allReviewed}
+        approvedCount={approvedCount}
+        onBulkComplete={onBulkComplete}
+        messages={messages}
+        onReplaceThread={replaceActiveThread}
+      />
     </div>
   );
 }

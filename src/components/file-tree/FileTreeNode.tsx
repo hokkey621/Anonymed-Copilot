@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 export interface FileEntry {
   path: string;
   filename: string;
-  is_dir: boolean;
+  isDir: boolean;
 }
 
 export interface OpenedFileInfo {
@@ -23,6 +23,10 @@ interface FileTreeNodeProps {
   onFileClick: (path: string, filename: string) => void;
   onCloseFile?: (path: string) => void;
   renderChildren: (file: FileEntry, depth: number) => React.ReactNode;
+  // Selection mode props
+  selectionMode?: boolean;
+  isSelected?: boolean;
+  onSelectChange?: (path: string, selected: boolean) => void;
 }
 
 /**
@@ -44,15 +48,18 @@ export function FileTreeNode({
   onFileClick,
   onCloseFile,
   renderChildren,
+  selectionMode = false,
+  isSelected = false,
+  onSelectChange,
 }: FileTreeNodeProps) {
   const baseIndent = 16; // px per depth level
 
-  if (file.is_dir) {
+  if (file.isDir) {
     return (
       <div>
         <div
           className={cn(
-            "flex items-center py-3 cursor-pointer text-base select-none transition-colors font-mono",
+            "flex items-center py-3 cursor-pointer text-base select-none transition-colors font-mono overflow-hidden",
             "hover:bg-slate-100 dark:hover:bg-slate-800/70"
           )}
           style={{ paddingLeft: `${depth * baseIndent + 12}px`, paddingRight: "12px" }}
@@ -76,7 +83,7 @@ export function FileTreeNode({
           >
             {isExpanded ? "−" : "+"}
           </span>
-          <span className="truncate font-medium ml-2">{file.filename}</span>
+          <span className="truncate flex-1 min-w-0 font-medium ml-2" title={file.filename}>{file.filename}</span>
         </div>
         {isExpanded && children.map((child) => renderChildren(child, depth + 1))}
       </div>
@@ -84,13 +91,16 @@ export function FileTreeNode({
   }
 
   // ファイル（末端ノード）
+  const selectionClass = isSelected
+    ? "bg-emerald-50/70 text-emerald-700 ring-1 ring-emerald-400/60 dark:bg-emerald-900/20 dark:text-emerald-300 dark:ring-emerald-500/40"
+    : "hover:bg-slate-100 dark:hover:bg-slate-800/70";
+
   return (
     <div
       className={cn(
-        "flex items-center py-3 cursor-pointer text-base select-none transition-colors group font-mono",
-        isActive
-          ? "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
-          : "hover:bg-slate-100 dark:hover:bg-slate-800/70"
+        "flex items-center py-3 cursor-pointer text-base select-none transition-colors group font-mono overflow-hidden",
+        selectionClass,
+        isActive && "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
       )}
       style={{ paddingLeft: `${depth * baseIndent + 12}px`, paddingRight: "12px" }}
       onClick={() => onFileClick(file.path, file.filename)}
@@ -103,13 +113,27 @@ export function FileTreeNode({
         }
       }}
     >
+      {/* Selection Checkbox */}
+      {selectionMode && onSelectChange && (
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={(e) => {
+            e.stopPropagation();
+            onSelectChange(file.path, e.target.checked);
+          }}
+          onClick={(e) => e.stopPropagation()}
+          className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 mr-2 shrink-0 cursor-pointer"
+          aria-label={`${file.filename}を選択`}
+        />
+      )}
       <span
         className="w-5 text-center shrink-0 text-slate-400 dark:text-slate-500"
         aria-hidden="true"
       >
         ├
       </span>
-      <span className="truncate flex-1 ml-2">{file.filename}</span>
+      <span className="truncate flex-1 min-w-0 ml-2" title={file.filename}>{file.filename}</span>
       {openedFileInfo?.hasChanges && (
         <span className="text-orange-500 font-bold mr-2" aria-label="未保存の変更">
           ●

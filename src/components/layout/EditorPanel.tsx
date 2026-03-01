@@ -17,9 +17,10 @@ interface EditorPanelProps {
   onAccept: () => void;
   onModifiedChange?: (value: string) => void;
   activeFileName?: string;
+  isReviewMode?: boolean;
 }
 
-export function EditorPanel({ original = "", modified = "", onAccept, onModifiedChange, activeFileName }: EditorPanelProps) {
+export function EditorPanel({ original = "", modified = "", onModifiedChange, activeFileName }: EditorPanelProps) {
   const hasChanges = original !== modified;
 
   // Focus Mode state
@@ -32,9 +33,14 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
 
   // Refs for Monaco editor instances and decorations
   const diffEditorRef = useRef<monaco.editor.IStandaloneDiffEditor | null>(null);
+  const originalEditorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const modifiedEditorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const decorationIdsRef = useRef<string[]>([]);
+  const originalDecorationIdsRef = useRef<string[]>([]);
   const widgetsRef = useRef<Map<number, monaco.editor.IContentWidget>>(new Map());
+  const deletedViewZonesRef = useRef<Map<number, HTMLElement>>(new Map());
+  const approvedBlockIdsRef = useRef<Set<number>>(new Set());
+  const focusModeEnabledRef = useRef(focusModeEnabled);
 
   // Completion celebration state
   const [showCompletionCelebration, setShowCompletionCelebration] = useState(false);
@@ -89,6 +95,16 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
     }
   }, [diffBlocks, approvedBlockIds]);
 
+  const applyDeletedViewZoneStyles = useCallback(() => {
+    const approvedIds = approvedBlockIdsRef.current;
+    const focusEnabled = focusModeEnabledRef.current;
+    deletedViewZonesRef.current.forEach((node, blockId) => {
+      const shouldDim = focusEnabled && approvedIds.has(blockId);
+      node.classList.toggle("approved-line-dimmed", shouldDim);
+      node.classList.toggle("approved-text-dimmed", shouldDim);
+    });
+  }, []);
+
   // Handle block approval toggle with animations
   const handleToggleApproveBlock = useCallback((blockId: number, event?: MouseEvent) => {
     setApprovedBlockIds(prev => {
@@ -134,6 +150,16 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
     });
   }, [triggerApprovalAnimation]);
 
+  useEffect(() => {
+    approvedBlockIdsRef.current = approvedBlockIds;
+    applyDeletedViewZoneStyles();
+  }, [approvedBlockIds, applyDeletedViewZoneStyles]);
+
+  useEffect(() => {
+    focusModeEnabledRef.current = focusModeEnabled;
+    applyDeletedViewZoneStyles();
+  }, [focusModeEnabled, applyDeletedViewZoneStyles]);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -168,59 +194,119 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
 
   // Apply decorations to dim approved blocks
   useEffect(() => {
-    if (!modifiedEditorRef.current || !focusModeEnabled) return;
+    if (!focusModeEnabled) return;
+
+    const modifiedEditor = modifiedEditorRef.current;
+    const originalEditor = originalEditorRef.current;
+    if (!modifiedEditor && !originalEditor) return;
+
+    const isValidRange = (startLine: number, endLine: number) => startLine > 0 && endLine > 0;
 
     // Build decorations for approved blocks (dim them)
-    const newDecorations: monaco.editor.IModelDeltaDecoration[] = [];
+    const modifiedDecorations: monaco.editor.IModelDeltaDecoration[] = [];
+    const originalDecorations: monaco.editor.IModelDeltaDecoration[] = [];
 
     diffBlocks.forEach(block => {
       if (approvedBlockIds.has(block.id)) {
         // Approved blocks get dimmed
-        newDecorations.push({
-          range: new monaco.Range(block.startLine, 1, block.endLine, 1),
-          options: {
-            isWholeLine: true,
-            className: "approved-line-dimmed",
-            inlineClassName: "approved-text-dimmed",
-          },
-        });
+        if (isValidRange(block.startLine, block.endLine)) {
+          modifiedDecorations.push({
+            range: new monaco.Range(block.startLine, 1, block.endLine, 1),
+            options: {
+              isWholeLine: true,
+              className: "approved-line-dimmed",
+              inlineClassName: "approved-text-dimmed",
+            },
+          });
+        }
+        if (isValidRange(block.originalStartLine, block.originalEndLine)) {
+          originalDecorations.push({
+            range: new monaco.Range(block.originalStartLine, 1, block.originalEndLine, 1),
+            options: {
+              isWholeLine: true,
+              className: "approved-line-dimmed",
+              inlineClassName: "approved-text-dimmed",
+            },
+          });
+        }
       }
     });
 
     // N+1 step: dim ALL diff blocks to focus on non-highlighted areas
     if (isNPlusOneStep) {
       // Clear previous decorations and apply to all blocks
-      const allBlockDecorations: monaco.editor.IModelDeltaDecoration[] = diffBlocks.map(block => ({
-        range: new monaco.Range(block.startLine, 1, block.endLine, 1),
-        options: {
-          isWholeLine: true,
-          className: "approved-line-dimmed",
-          inlineClassName: "approved-text-dimmed",
-        },
-      }));
-      decorationIdsRef.current = modifiedEditorRef.current.deltaDecorations(
-        decorationIdsRef.current,
-        allBlockDecorations
-      );
+      const allModifiedDecorations: monaco.editor.IModelDeltaDecoration[] = diffBlocks
+        .filter(block => isValidRange(block.startLine, block.endLine))
+        .map(block => ({
+          range: new monaco.Range(block.startLine, 1, block.endLine, 1),
+          options: {
+            isWholeLine: true,
+            className: "approved-line-dimmed",
+            inlineClassName: "approved-text-dimmed",
+          },
+        }));
+      const allOriginalDecorations: monaco.editor.IModelDeltaDecoration[] = diffBlocks
+        .filter(block => isValidRange(block.originalStartLine, block.originalEndLine))
+        .map(block => ({
+          range: new monaco.Range(block.originalStartLine, 1, block.originalEndLine, 1),
+          options: {
+            isWholeLine: true,
+            className: "approved-line-dimmed",
+            inlineClassName: "approved-text-dimmed",
+          },
+        }));
+      if (modifiedEditor) {
+        decorationIdsRef.current = modifiedEditor.deltaDecorations(
+          decorationIdsRef.current,
+          allModifiedDecorations
+        );
+      }
+      if (originalEditor) {
+        originalDecorationIdsRef.current = originalEditor.deltaDecorations(
+          originalDecorationIdsRef.current,
+          allOriginalDecorations
+        );
+      }
     } else {
-      decorationIdsRef.current = modifiedEditorRef.current.deltaDecorations(
-        decorationIdsRef.current,
-        newDecorations
-      );
+      if (modifiedEditor) {
+        decorationIdsRef.current = modifiedEditor.deltaDecorations(
+          decorationIdsRef.current,
+          modifiedDecorations
+        );
+      }
+      if (originalEditor) {
+        originalDecorationIdsRef.current = originalEditor.deltaDecorations(
+          originalDecorationIdsRef.current,
+          originalDecorations
+        );
+      }
     }
   }, [approvedBlockIds, diffBlocks, focusModeEnabled, isNPlusOneStep]);
 
   // Clear decorations when Focus Mode is disabled
   useEffect(() => {
-    if (!modifiedEditorRef.current) return;
+    if (!modifiedEditorRef.current && !originalEditorRef.current) return;
 
     if (!focusModeEnabled) {
-      decorationIdsRef.current = modifiedEditorRef.current.deltaDecorations(
-        decorationIdsRef.current,
-        []
-      );
+      if (modifiedEditorRef.current) {
+        decorationIdsRef.current = modifiedEditorRef.current.deltaDecorations(
+          decorationIdsRef.current,
+          []
+        );
+      }
+      if (originalEditorRef.current) {
+        originalDecorationIdsRef.current = originalEditorRef.current.deltaDecorations(
+          originalDecorationIdsRef.current,
+          []
+        );
+      }
+      deletedViewZonesRef.current.forEach((node) => {
+        node.classList.remove("approved-line-dimmed", "approved-text-dimmed");
+      });
     }
   }, [focusModeEnabled]);
+
+
 
   // Trigger celebration when all complete
   useEffect(() => {
@@ -254,6 +340,13 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
         []
       );
     }
+    if (originalEditorRef.current && originalDecorationIdsRef.current.length > 0) {
+      originalDecorationIdsRef.current = originalEditorRef.current.deltaDecorations(
+        originalDecorationIdsRef.current,
+        []
+      );
+    }
+    deletedViewZonesRef.current.clear();
   }, [original, modified]);
 
   const handleEditorDidMount = (editor: monaco.editor.IStandaloneDiffEditor) => {
@@ -261,10 +354,18 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
 
       // Hide line numbers on the original (left) editor
       const originalEditor = editor.getOriginalEditor();
-      originalEditor.updateOptions({ lineNumbers: 'off' });
+      originalEditorRef.current = originalEditor;
+      originalEditor.updateOptions({
+        lineNumbers: 'off',
+        wordWrap: 'off',
+      });
 
       const modifiedEditor = editor.getModifiedEditor();
       modifiedEditorRef.current = modifiedEditor;
+      modifiedEditor.updateOptions({
+        wordWrap: 'on',
+        wrappingStrategy: 'advanced',
+      });
 
       modifiedEditor.onDidChangeModelContent(() => {
           if (onModifiedChange) {
@@ -289,6 +390,25 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
           widgetsRef.current.set(block.id, widget);
           modifiedEditor.addContentWidget(widget);
         });
+
+        const editorDomNode = modifiedEditor.getDomNode();
+        if (editorDomNode) {
+          requestAnimationFrame(() => {
+            const deletedZoneNodes = Array.from(
+              editorDomNode.querySelectorAll<HTMLElement>(".view-zones .line-delete")
+            );
+            const deletionBlocks = blocks.filter(block => block.hasOriginal);
+            deletedViewZonesRef.current.clear();
+            const count = Math.min(deletedZoneNodes.length, deletionBlocks.length);
+            for (let i = 0; i < count; i += 1) {
+              const node = deletedZoneNodes[i];
+              const blockId = deletionBlocks[i].id;
+              node.dataset.blockId = String(blockId);
+              deletedViewZonesRef.current.set(blockId, node);
+            }
+            applyDeletedViewZoneStyles();
+          });
+        }
       });
   };
 
@@ -309,7 +429,7 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
             )}
             {!activeFileName && (
               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                {hasChanges ? "Review Changes" : "Editor"}
+                {hasChanges ? "変更を確認" : "エディタ"}
               </span>
             )}
 
@@ -323,10 +443,10 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
                       ? "bg-blue-100 text-blue-700 hover:bg-blue-200"
                       : "bg-slate-100 text-slate-500 hover:bg-slate-200"
                   }`}
-                  title={focusModeEnabled ? "Disable Focus Mode" : "Enable Focus Mode"}
+                  title={focusModeEnabled ? "フォーカスモードを無効化" : "フォーカスモードを有効化"}
                 >
                   {focusModeEnabled ? <Eye size={12} /> : <EyeOff size={12} />}
-                  <span>Focus</span>
+                  <span>フォーカス</span>
                 </button>
 
                 {/* Navigation buttons */}
@@ -369,30 +489,16 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+           <div className="flex items-center gap-2">
               {hasChanges && (
                   <>
                     <button
                         onClick={handleCopy}
                         className="flex items-center gap-1 text-xs px-2 py-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 transition-colors"
-                        title="Copy Modified Text"
+                        title="コピー"
                     >
                         <Clipboard size={14} />
-                        <span>Copy</span>
-                    </button>
-                    {/* Show prominent Apply button when all complete */}
-                    <button
-                        onClick={onAccept}
-                        className={`flex items-center gap-1 text-xs px-3 py-1 rounded shadow-sm transition-all ${
-                          allComplete
-                            ? "bg-green-600 hover:bg-green-700 text-white animate-pulse"
-                            : "bg-slate-400 text-white cursor-not-allowed opacity-60"
-                        }`}
-                        title={allComplete ? "全ての変更を適用" : "全ての確認ステップを完了してください"}
-                        disabled={!allComplete}
-                    >
-                        {allComplete ? <Sparkles size={14} /> : <Check size={14} />}
-                        <span>{allComplete ? "変更を適用" : "Apply Changes"}</span>
+                        <span>コピー</span>
                     </button>
                   </>
               )}
@@ -401,7 +507,13 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
 
       {/* Enhanced Progress Bar */}
       {hasChanges && totalBlocks > 0 && (
-        <div className="progress-bar-container shrink-0">
+        <div className="progress-bar-container shrink-0"
+          role="progressbar"
+          aria-valuenow={Math.round(progressPercent)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={`確認進捗: ${completedSteps}/${totalSteps}`}
+        >
           <div
             className={`progress-bar-fill ${
               allComplete ? "complete" : isNPlusOneStep ? "n-plus-one" : "in-progress"
@@ -443,15 +555,8 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
         <div className="bg-green-50 border-b border-green-200 px-4 py-2 flex items-center justify-between">
           <div className="flex items-center gap-2 text-green-700">
             <Sparkles size={16} />
-            <span className="text-sm font-medium">全ての確認が完了しました！</span>
+            <span className="text-sm font-medium">全ての確認が完了しました！チャットの「承認して次へ」ボタンを押して進んでください。</span>
           </div>
-          <button
-            onClick={onAccept}
-            className="flex items-center gap-1 text-sm px-4 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded shadow-sm transition-colors"
-          >
-            <Check size={14} />
-            <span>変更を適用して保存</span>
-          </button>
         </div>
       )}
 
@@ -464,10 +569,12 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
             onMount={handleEditorDidMount}
             options={{
                 readOnly: false,
-                renderSideBySide: true,
+                renderSideBySide: false,
                 minimap: { enabled: false },
                 scrollBeyondLastLine: false,
                 originalEditable: false,
+                fontSize: 18,
+            diffWordWrap: "on",
             }}
             originalModelPath="original"
             modifiedModelPath="modified"
@@ -475,35 +582,25 @@ export function EditorPanel({ original = "", modified = "", onAccept, onModified
       </div>
     </div>
 
-      {/* Completion Celebration Overlay */}
-      {showCompletionCelebration && (
-        <div className="completion-overlay">
-          <div className="completion-icon">
-            <PartyPopper size={40} />
-          </div>
-          <h2 className="completion-title">確認完了！</h2>
-          <p className="completion-subtitle">全ての変更箇所の確認が完了しました</p>
-          <div className="completion-actions">
-            <button
-              className="completion-button-primary"
-              onClick={() => {
-                setShowCompletionCelebration(false);
-                onAccept();
-              }}
-            >
-              <Check size={20} />
-              変更を適用して保存
-            </button>
-            <button
-              className="completion-button-secondary"
-              onClick={() => setShowCompletionCelebration(false)}
-            >
-              <X size={20} />
-              閉じる
-            </button>
-          </div>
+    {/* Completion Celebration Overlay */}
+    {showCompletionCelebration && (
+      <div className="completion-overlay">
+        <div className="completion-icon">
+          <PartyPopper size={40} />
         </div>
-      )}
-    </>
+        <h2 className="completion-title">確認完了！</h2>
+        <p className="completion-subtitle">チャットの「承認して次へ」ボタンで進んでください</p>
+        <div className="completion-actions">
+          <button
+            className="completion-button-secondary"
+            onClick={() => setShowCompletionCelebration(false)}
+          >
+            <X size={20} />
+            画面を閉じる
+          </button>
+        </div>
+      </div>
+    )}
+  </>
   );
 }

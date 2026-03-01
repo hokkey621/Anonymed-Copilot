@@ -1,8 +1,8 @@
 import { AnonPlan } from "./model";
 
 export const createDefaultPlan = (): AnonPlan => ({
-    task_name: "General Task",
-    global_rules: {},
+    taskName: "General Task",
+    globalRules: {},
     replacements: [],
     status: "draft"
 });

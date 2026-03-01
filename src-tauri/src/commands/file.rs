@@ -1,14 +1,17 @@
-use serde::Serialize;
-use std::fs;
-use std::path::Path;
-use tauri_plugin_dialog::DialogExt;
-use chrono::Local;
-use sha2::{Sha256, Digest};
-use hex;
+use crate::utils::access_control::{AccessControl, AccessSnapshot};
 use crate::utils::file_reader::read_file_with_encoding;
+use chrono::Local;
+use hex;
+use serde::Serialize;
+use sha2::{Digest, Sha256};
+use std::fs;
+use std::path::{Path, PathBuf};
+use tauri::State;
+use tauri_plugin_dialog::DialogExt;
 
 /// Response from open_file command
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OpenFileResult {
     pub path: String,
     pub content: String,
@@ -21,10 +24,63 @@ fn sha256_hash(content: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
+fn ensure_save_path_allowed(
+    access_control: &AccessControl,
+    save_path: &Path,
+) -> Result<PathBuf, String> {
+    match access_control.ensure_allowed(save_path) {
+        Ok(path) => Ok(path),
+        Err(err) if err.contains("Path is outside the allowed directory") => {
+            let parent = save_path
+                .parent()
+                .ok_or_else(|| "Invalid path: no parent directory".to_string())?;
+            let rebased_dir = parent
+                .canonicalize()
+                .map_err(|e| format!("Invalid save directory: {}", e))?;
+            access_control.set_base_dir(rebased_dir)?;
+            access_control.ensure_allowed(save_path)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+#[tauri::command]
+pub fn open_directory(path: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// Open file dialog and read file content
 #[tauri::command]
-pub async fn open_file(app: tauri::AppHandle) -> Result<Option<OpenFileResult>, String> {
-    let file_path = app.dialog()
+pub async fn open_file(
+    app: tauri::AppHandle,
+    access_control: State<'_, AccessControl>,
+) -> Result<Option<OpenFileResult>, String> {
+    if cfg!(debug_assertions) {
+        println!("[File] open_file dialog opened");
+    }
+    let file_path = app
+        .dialog()
         .file()
         .add_filter("Text Files", &["txt", "csv", "json", "md", "log"])
         .add_filter("All Files", &["*"])
@@ -34,8 +90,25 @@ pub async fn open_file(app: tauri::AppHandle) -> Result<Option<OpenFileResult>, 
         return Ok(None); // User cancelled
     };
 
-    let path_buf = path.into_path().map_err(|e| format!("Invalid path: {:?}", e))?;
+    let path_buf = path
+        .into_path()
+        .map_err(|e| format!("Invalid path: {:?}", e))?;
+    let parent_dir = path_buf
+        .parent()
+        .ok_or_else(|| "Invalid path: no parent directory".to_string())?
+        .to_path_buf();
+
+    access_control.set_base_dir(parent_dir)?;
+
+    let path_buf = access_control.ensure_allowed(&path_buf)?;
     let content = read_file_with_encoding(&path_buf)?;
+    if cfg!(debug_assertions) {
+        println!(
+            "[File] open_file read: path={}, size={}",
+            path_buf.display(),
+            content.len()
+        );
+    }
     let filename = path_buf
         .file_name()
         .and_then(|n| n.to_str())
@@ -51,6 +124,7 @@ pub async fn open_file(app: tauri::AppHandle) -> Result<Option<OpenFileResult>, 
 
 /// Response from save_anonymized_file command
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SaveFileResult {
     pub saved_path: String,
     pub audit_log_path: String,
@@ -64,7 +138,15 @@ pub async fn save_anonymized_file(
     original_filename: String,
     original_content: String,
     applied_plan: serde_json::Value,
+    access_control: State<'_, AccessControl>,
 ) -> Result<Option<SaveFileResult>, String> {
+    if cfg!(debug_assertions) {
+        println!(
+            "[File] save_anonymized_file: original={}, content_size={}",
+            original_filename,
+            content.len()
+        );
+    }
     // Generate default filename with _anonymized suffix
     let default_name = if let Some((name, ext)) = original_filename.rsplit_once('.') {
         format!("{}_anonymized.{}", name, ext)
@@ -72,7 +154,8 @@ pub async fn save_anonymized_file(
         format!("{}_anonymized", original_filename)
     };
 
-    let save_path = app.dialog()
+    let save_path = app
+        .dialog()
         .file()
         .set_file_name(&default_name)
         .add_filter("Text Files", &["txt", "csv", "json", "md"])
@@ -83,14 +166,20 @@ pub async fn save_anonymized_file(
         return Ok(None); // User cancelled
     };
 
-    let path_buf = path.into_path().map_err(|e| format!("Invalid path: {:?}", e))?;
+    let path_buf = path
+        .into_path()
+        .map_err(|e| format!("Invalid path: {:?}", e))?;
+    let path_buf = ensure_save_path_allowed(&access_control, &path_buf)?;
 
     // Save the anonymized content
-    fs::write(&path_buf, &content)
-        .map_err(|e| format!("Failed to save file: {}", e))?;
+    fs::write(&path_buf, &content).map_err(|e| format!("Failed to save file: {}", e))?;
+    if cfg!(debug_assertions) {
+        println!("[File] saved: {}", path_buf.display());
+    }
 
     // Generate audit log in the same directory
     let audit_log_path = path_buf.with_extension("audit.json");
+    ensure_save_path_allowed(&access_control, &audit_log_path)?;
     let timestamp = Local::now().format("%Y-%m-%dT%H:%M:%S%z").to_string();
 
     let audit_log = serde_json::json!({
@@ -102,8 +191,13 @@ pub async fn save_anonymized_file(
         "applied_plan": applied_plan,
     });
 
-    fs::write(&audit_log_path, serde_json::to_string_pretty(&audit_log).unwrap())
+    let audit_json = serde_json::to_string_pretty(&audit_log)
+        .map_err(|e| format!("Failed to serialize audit log: {}", e))?;
+    fs::write(&audit_log_path, audit_json)
         .map_err(|e| format!("Failed to write audit log: {}", e))?;
+    if cfg!(debug_assertions) {
+        println!("[File] audit log saved: {}", audit_log_path.display());
+    }
 
     Ok(Some(SaveFileResult {
         saved_path: path_buf.to_string_lossy().to_string(),
@@ -113,6 +207,7 @@ pub async fn save_anonymized_file(
 
 /// File entry for folder listing
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FolderFileEntry {
     pub path: String,
     pub filename: String,
@@ -121,6 +216,7 @@ pub struct FolderFileEntry {
 
 /// Response from open_folder command
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OpenFolderResult {
     pub folder_path: String,
     pub folder_name: String,
@@ -129,16 +225,25 @@ pub struct OpenFolderResult {
 
 /// Open folder dialog and list files
 #[tauri::command]
-pub async fn open_folder(app: tauri::AppHandle) -> Result<Option<OpenFolderResult>, String> {
-    let folder_path = app.dialog()
-        .file()
-        .blocking_pick_folder();
+pub async fn open_folder(
+    app: tauri::AppHandle,
+    access_control: State<'_, AccessControl>,
+) -> Result<Option<OpenFolderResult>, String> {
+    if cfg!(debug_assertions) {
+        println!("[File] open_folder dialog opened");
+    }
+    let folder_path = app.dialog().file().blocking_pick_folder();
 
     let Some(path) = folder_path else {
         return Ok(None); // User cancelled
     };
 
-    let path_buf = path.into_path().map_err(|e| format!("Invalid path: {:?}", e))?;
+    let path_buf = path
+        .into_path()
+        .map_err(|e| format!("Invalid path: {:?}", e))?;
+
+    access_control.set_base_dir(path_buf.clone())?;
+    let snapshot = access_control.snapshot()?;
 
     let folder_name = path_buf
         .file_name()
@@ -147,7 +252,14 @@ pub async fn open_folder(app: tauri::AppHandle) -> Result<Option<OpenFolderResul
         .to_string();
 
     let mut files = Vec::new();
-    collect_files_recursive(&path_buf, &mut files, 0, 3)?; // Max depth 3
+    collect_files_recursive(&snapshot, &path_buf, &mut files, 0, 3)?; // Max depth 3
+    if cfg!(debug_assertions) {
+        println!(
+            "[File] open_folder read: path={}, entries={}",
+            path_buf.display(),
+            files.len()
+        );
+    }
 
     Ok(Some(OpenFolderResult {
         folder_path: path_buf.to_string_lossy().to_string(),
@@ -158,6 +270,7 @@ pub async fn open_folder(app: tauri::AppHandle) -> Result<Option<OpenFolderResul
 
 /// Recursively collect files from directory
 fn collect_files_recursive(
+    snapshot: &AccessSnapshot,
     dir: &Path,
     files: &mut Vec<FolderFileEntry>,
     depth: usize,
@@ -167,13 +280,20 @@ fn collect_files_recursive(
         return Ok(());
     }
 
-    let entries = fs::read_dir(dir)
-        .map_err(|e| format!("Failed to read directory: {}", e))?;
+    let entries = fs::read_dir(dir).map_err(|e| format!("Failed to read directory: {}", e))?;
 
     for entry in entries {
         let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
         let path = entry.path();
-        let filename = path.file_name()
+        if snapshot.is_ignored(&path) {
+            continue;
+        }
+
+        if snapshot.ensure_within_base(&path).is_err() {
+            continue;
+        }
+        let filename = path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("")
             .to_string();
@@ -189,7 +309,7 @@ fn collect_files_recursive(
                 filename,
                 is_dir: true,
             });
-            collect_files_recursive(&path, files, depth + 1, max_depth)?;
+            collect_files_recursive(snapshot, &path, files, depth + 1, max_depth)?;
         } else {
             files.push(FolderFileEntry {
                 path: path.to_string_lossy().to_string(),
@@ -204,9 +324,20 @@ fn collect_files_recursive(
 
 /// Read a single file's content (for lazy loading)
 #[tauri::command]
-pub async fn read_file_content(file_path: String) -> Result<OpenFileResult, String> {
+pub async fn read_file_content(
+    file_path: String,
+    access_control: State<'_, AccessControl>,
+) -> Result<OpenFileResult, String> {
     let path = Path::new(&file_path);
-    let content = read_file_with_encoding(path)?;
+    let path = access_control.ensure_allowed(path)?;
+    let content = read_file_with_encoding(&path)?;
+    if cfg!(debug_assertions) {
+        println!(
+            "[File] read_file_content: path={}, size={}",
+            path.display(),
+            content.len()
+        );
+    }
     let filename = path
         .file_name()
         .and_then(|n| n.to_str())
