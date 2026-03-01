@@ -128,7 +128,6 @@ pub fn discovery_hint_candidates_without_files() -> Vec<HintCandidate> {
         HintCandidate::new("open_folder", "フォルダを開く"),
         HintCandidate::new("show_usage", "使い方を教えて"),
         HintCandidate::new("ask_capability", "今できることを教えて"),
-        HintCandidate::new("show_shortcut", "最短の操作を教えて"),
     ]
 }
 
@@ -138,7 +137,6 @@ pub fn discovery_hint_candidates_with_files() -> Vec<HintCandidate> {
         HintCandidate::new("create_plan_standard", "標準ルールで作成"),
         HintCandidate::new("check_targets", "処理対象を確認"),
         HintCandidate::new("ask_purpose", "利用目的を選ぶ"),
-        HintCandidate::new("show_shortcut", "最短の操作を教えて"),
     ]
 }
 
@@ -149,7 +147,6 @@ pub fn help_hint_candidates(file_count: usize) -> Vec<HintCandidate> {
             HintCandidate::new("check_targets", "処理対象を確認"),
             HintCandidate::new("create_plan", "匿名化プランを作成"),
             HintCandidate::new("show_usage", "使い方を教えて"),
-            HintCandidate::new("show_shortcut", "最短の操作を教えて"),
         ]
     } else {
         vec![
@@ -157,7 +154,6 @@ pub fn help_hint_candidates(file_count: usize) -> Vec<HintCandidate> {
             HintCandidate::new("create_plan", "匿名化プランを作成"),
             HintCandidate::new("create_plan_standard", "標準ルールで作成"),
             HintCandidate::new("ask_purpose", "利用目的を選ぶ"),
-            HintCandidate::new("show_shortcut", "最短の操作を教えて"),
         ]
     }
 }
